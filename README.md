@@ -1,30 +1,8 @@
 # Claude Quota Router
 
-Claude Quota Router switches saved Claude Code accounts and shows quota timing in the statusline. Personal, team, and enterprise plans are all routed the same way.
+Claude Quota Router keeps Claude Code on an account that still has quota. It reads the quota Claude Code hands to the statusline, remembers what each saved account had left when you were last on it, and moves the active credential down an order you set. Personal, team, and enterprise plans are all routed the same way.
 
-## Scenario
-
-Use it when the account you prefer is near its limit and another saved account should carry the work until the first one resets.
-
-```text
-me@work.com account
-  -> quota alert in statusline
-  -> switch to me@gmail.com
-  -> me@work.com reset countdown
-  -> switch back to me@work.com
-```
-
-## Platforms
-
-| Platform | Credential store | Desktop notifications | Verification |
-|---|---|---|---|
-| macOS | Keychain, through `security` | `osascript` | built and run |
-| Linux | owner-only files | `notify-send` | compiles and unit tested, not run |
-| Windows | files under the profile ACL | none, the statusline carries the message | compiles and unit tested, not run |
-
-Where there is no Keychain, the active credential is Claude Code's own `.credentials.json` and saved accounts are files in an `accounts` directory. Both are replaced by renaming a freshly created owner-only file over the old one, and a symlink at either path is refused, which is the treatment Claude Code gives its own file. That backend is compiled and unit tested on every platform, including macOS, so its behavior is covered even where it is not the one in use.
-
-`install.sh` is a POSIX shell script and covers macOS and Linux. On Windows, build with `cargo build --release`, copy `target\release\claude-quota-router.exe` somewhere on `PATH`, and add that directory with `setx PATH`.
+![The statusline command receives rate_limits from Claude Code, files one reading per account into rate-limits.json, takes the account order from config.json, and replaces the active credential with a saved one when the current account reaches its limit.](docs/figures/switch-loop.svg)
 
 ## Install
 
@@ -32,122 +10,30 @@ Where there is no Keychain, the active credential is Claude Code's own `.credent
 ./install.sh
 ```
 
-The script builds the release binary, copies it to `~/.local/bin`, and adds that directory to `PATH` in the file your login shell reads: `.zprofile` for zsh, `.bash_profile` or `.profile` for bash, `config.fish` for fish. It leaves every profile alone when the directory is already on `PATH`, and prints the line to add by hand for a shell it does not recognize.
+The script builds the binary, copies it to `~/.local/bin`, and adds that directory to `PATH` in the file your login shell reads. [docs/install.md](docs/install.md) covers the options, a manual build, and Windows.
 
-| Option | Effect |
-|---|---|
-| `--bin-dir DIR` | Install into `DIR` instead of `~/.local/bin` |
-| `--no-path` | Install the binary and touch no shell profile |
+## Quick start
 
-`CLAUDE_QUOTA_ROUTER_BIN_DIR` sets the same directory as `--bin-dir`.
-
-Building needs Rust 1.88 or newer. The script falls back to `~/.cargo/bin/cargo` when `cargo` is not on `PATH`, which is where rustup puts it after an install that left the shell profile alone.
-
-To build by hand instead:
-
-```bash
-cargo build --release
-cp target/release/claude-quota-router ~/.local/bin/
-```
-
-## Setup
-
-Save each Claude Code login once. The account name defaults to the email address that `claude auth status` reports, which is what tells two logins apart. The plan kind comes from the same command: `max`, `pro`, and `free` are saved as `personal`, and `team` and `enterprise` keep their own names.
-
-1. Log in with the first account and save it.
+Save each login once, while that account is the one Claude Code is signed in to.
 
 ```bash
 claude-quota-router setup
-```
-
-2. Log out, log in with the next account, then save it. Repeat for every account.
-
-```bash
-claude-quota-router setup
-```
-
-Pass a name when a shorter one reads better, and `--kind` when the plan should be recorded as something other than what `claude auth status` reports.
-
-```bash
-claude-quota-router setup team-side --kind team
-```
-
-3. Install the statusline wrapper. An existing `statusLine` command is preserved and still runs; other keys on that setting, such as `padding`, are left alone. Run it from the copy on `PATH`, because the command records its own path in `settings.json`.
-
-```bash
 claude-quota-router install
-```
-
-4. Set the alert threshold and the account order.
-
-```bash
-claude-quota-router config --alert-at 95 --mode manual
 claude-quota-router config --priority me@work.com,me@gmail.com
-```
-
-Accounts missing from `--priority` fall in behind it by plan kind, in the order personal, team, enterprise, other. Pass `--priority ''` to clear the list.
-
-## Daily Use
-
-Switch accounts from a shell or from Claude Code with `!`.
-
-```bash
-claude-quota-router switch me@gmail.com --yes
-claude-quota-router toggle --yes
 claude-quota-router list
-claude-quota-router status
 ```
 
-`list` prints accounts in routing order with the last quota reading for each one.
+`setup` names the account after the email `claude auth status` reports, and `install` wraps the statusline command you already have rather than replacing it. From there, `switch`, `toggle`, and `status` drive the router by hand, and `config --mode auto` lets it switch on its own.
 
-```text
-  1. me@work.com	team	100%(5h) reset in 2h10m(5h)
-* 2. me@gmail.com	personal	42%(5h)
-  3. me@enterprise.com	enterprise	-
-```
+## Documentation
 
-## Auto Mode
-
-Auto mode follows the account order, not the plan kind.
-
-```bash
-claude-quota-router config --mode auto
-```
-
-| State | Action |
+| Document | Contents |
 |---|---|
-| current account reaches 100% | switch to the first account in the order that is not at its own limit |
-| a higher ranked account passes its reset time | switch back to that account |
-| every account is at its limit | stay put and report it in the statusline |
+| [docs/routing.md](docs/routing.md) | How the order and the cached readings pick an account, and what the statusline prints |
+| [docs/platforms.md](docs/platforms.md) | Credential stores, notifications, and file locations per platform |
+| [docs/install.md](docs/install.md) | Install options, manual build, and the statusline wrapper |
+| [docs/development.md](docs/development.md) | Module layout, checks, and adding a platform backend |
 
-Two rules keep auto mode from acting on stale readings. Only the account Claude Code is logged into reports its own quota, so every other account is judged by the reading taken when the router last left it. After a switch, quota readings are ignored for 90 seconds, because a running Claude Code session keeps reporting the quota of the account it started with until it picks up the new credential.
+## License
 
-## Storage
-
-The configuration directory is `%APPDATA%\claude-quota-router` on Windows, `$XDG_CONFIG_HOME/claude-quota-router` on Linux when that variable is set, and `~/.config/claude-quota-router` otherwise.
-
-| Data | macOS | Linux and Windows |
-|---|---|---|
-| Active Claude Code credential | Keychain service `Claude Code-credentials` | `.credentials.json` in Claude Code's config directory |
-| Saved account credentials | Keychain service `claude-quota-router` | `accounts/<name>.json` in the configuration directory |
-
-| Data | Location |
-|---|---|
-| Account metadata | `state.json` in the configuration directory |
-| Alert, mode, and account order | `config.json` in the configuration directory |
-| Quota cache, one entry per account | `rate-limits.json` in the configuration directory |
-| Claude Code settings the wrapper edits | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` |
-
-Switching replaces the active credential only. The `oauthAccount` block in `~/.claude.json` still describes the previous account until Claude Code refetches the profile.
-
-## Verify
-
-Run the checks before publishing a change. The cross target checks type check the platform branches that the host cannot run.
-
-```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo clippy --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
-cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
-cargo build --release
-```
+MIT. See [LICENSE](LICENSE).

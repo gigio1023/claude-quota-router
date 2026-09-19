@@ -1,0 +1,24 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    pad: 16
+  }
+}
+
+...@editorial-theme
+direction: down
+
+claude: "Claude Code" {class: entity}
+router: "claude-quota-router statusline\nstatusLine.command" {class: [entity; accent]}
+config: "config.json" {class: entity}
+cache: "rate-limits.json" {class: entity}
+saved: "saved accounts" {class: entity}
+active: "active credential" {class: entity}
+
+claude -> router: "rate_limits on stdin" {class: flow}
+config -> router: "priority order" {class: flow}
+router -> cache: "files each reading" {class: flow}
+cache -> router: "resets_at of a blocked account" {class: flow}
+saved -> router: "next in the order" {class: flow}
+router -> active: "at 100%, mode auto" {class: flow}
+active -> claude: "next session" {class: [flow; secondary-connection]}
