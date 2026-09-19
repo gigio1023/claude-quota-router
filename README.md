@@ -16,7 +16,22 @@ me@work.com account
 
 ## Install
 
-Build the binary and place it on `PATH`.
+```bash
+./install.sh
+```
+
+The script builds the release binary, copies it to `~/.local/bin`, and adds that directory to `PATH` in the file your login shell reads: `.zprofile` for zsh, `.bash_profile` or `.profile` for bash, `config.fish` for fish. It leaves every profile alone when the directory is already on `PATH`, and prints the line to add by hand for a shell it does not recognize.
+
+| Option | Effect |
+|---|---|
+| `--bin-dir DIR` | Install into `DIR` instead of `~/.local/bin` |
+| `--no-path` | Install the binary and touch no shell profile |
+
+`CLAUDE_QUOTA_ROUTER_BIN_DIR` sets the same directory as `--bin-dir`.
+
+Building needs Rust 1.88 or newer. The script falls back to `~/.cargo/bin/cargo` when `cargo` is not on `PATH`, which is where rustup puts it after an install that left the shell profile alone.
+
+To build by hand instead:
 
 ```bash
 cargo build --release
@@ -45,7 +60,7 @@ Pass a name when a shorter one reads better, and `--kind` when the plan should b
 claude-quota-router setup team-side --kind team
 ```
 
-3. Install the statusline wrapper. An existing `statusLine` command is preserved and still runs; other keys on that setting, such as `padding`, are left alone.
+3. Install the statusline wrapper. An existing `statusLine` command is preserved and still runs; other keys on that setting, such as `padding`, are left alone. Run it from the copy on `PATH`, because the command records its own path in `settings.json`.
 
 ```bash
 claude-quota-router install
