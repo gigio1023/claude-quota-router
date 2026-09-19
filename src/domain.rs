@@ -15,6 +15,12 @@ use std::fmt;
 /// so this only bounds the damage when a window arrives without one.
 const UNKNOWN_RESET_GRACE: i64 = 3600;
 
+/// Device names Windows refuses to use as a file name.
+const WINDOWS_DEVICE_NAMES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AccountName(String);
 
@@ -42,6 +48,12 @@ impl AccountName {
         }
         if !value.chars().any(|ch| ch.is_ascii_alphanumeric()) {
             bail!("account name must contain a letter or a digit");
+        }
+        // A saved account becomes a file wherever there is no Keychain, and
+        // Windows reserves these stems even with an extension appended.
+        let stem = value.split('.').next().unwrap_or(value.as_str());
+        if WINDOWS_DEVICE_NAMES.contains(&stem) {
+            bail!("account name cannot be the reserved device name {stem}");
         }
         Ok(Self(value))
     }
@@ -151,7 +163,6 @@ pub(crate) struct AccountEntry {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct State {
-    pub(crate) active_account: Option<String>,
     pub(crate) current_account: Option<String>,
     pub(crate) previous_account: Option<String>,
     pub(crate) accounts: BTreeMap<String, AccountEntry>,
@@ -283,6 +294,7 @@ mod tests {
         assert!(AccountName::parse("-team").is_err());
         assert!(AccountName::parse("team main").is_err());
         assert!(AccountName::parse("...").is_err());
+        assert!(AccountName::parse("nul").is_err());
     }
 
     #[test]

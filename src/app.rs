@@ -9,7 +9,7 @@ use crate::context::AppContext;
 use crate::domain::{
     AccountEntry, AccountKind, AccountName, Config, RateLimitSnapshot, RoutingMode, State,
 };
-use crate::keychain;
+use crate::credentials;
 use crate::routing;
 use crate::settings;
 use crate::statusline;
@@ -70,15 +70,8 @@ impl App {
         self.ctx.ensure_app_dir()?;
 
         let mut state = storage::load_state(&self.ctx)?;
-        // The active Keychain account is stable for a given Claude Code
-        // installation. Cache it after first detection so later commands do not
-        // need to parse Keychain metadata unless the state file is missing.
-        let active_account = match &state.active_account {
-            Some(account) => account.clone(),
-            None => keychain::detect_active_account()?,
-        };
-        let credential = keychain::read_active(&active_account)
-            .context("failed to read active Claude Code credential from Keychain")?;
+        let credential = credentials::read_active(&self.ctx)
+            .context("failed to read the active Claude Code credential")?;
         // Prefer an explicit CLI override for import and migration cases,
         // then what Claude Code reports, then the credential JSON shape.
         let kind = kind
@@ -86,7 +79,7 @@ impl App {
             .or_else(|| claude::detect_account_kind_from_credential(&credential))
             .unwrap_or(AccountKind::Other);
 
-        keychain::upsert_account(&name, &credential)
+        credentials::write_saved(&self.ctx, &name, &credential)
             .with_context(|| format!("failed to save account credential for {name}"))?;
 
         let now = now_epoch();
@@ -94,7 +87,6 @@ impl App {
             .accounts
             .get(name.as_str())
             .map_or(now, |entry| entry.created_at);
-        state.active_account = Some(active_account);
         state.current_account = Some(name.to_string());
         state.accounts.insert(
             name.clone().into_string(),
@@ -174,7 +166,7 @@ impl App {
         if state.accounts.remove(name.as_str()).is_none() {
             bail!("account is not saved: {name}");
         }
-        keychain::delete_account(&name).ok();
+        credentials::delete_saved(&self.ctx, &name).ok();
         if state.previous_account.as_deref() == Some(name.as_str()) {
             state.previous_account = None;
         }
@@ -196,7 +188,7 @@ impl App {
         }
 
         if let Some(detected) =
-            switcher::detect_current_account_by_credential(&mut state)?
+            switcher::detect_current_account_by_credential(&self.ctx, &mut state)?
         {
             storage::save_state(&self.ctx, &state)?;
             println!("{detected}");
@@ -221,10 +213,7 @@ impl App {
             "previous: {}",
             state.previous_account.as_deref().unwrap_or("none")
         );
-        println!(
-            "active keychain account: {}",
-            state.active_account.as_deref().unwrap_or("unknown")
-        );
+        println!("credential store: {}", credentials::describe(&self.ctx));
         print_config(&config, &state);
         println!("accounts: {}", state.accounts.len());
 

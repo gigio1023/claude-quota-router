@@ -118,7 +118,6 @@ mod tests {
             );
         }
         State {
-            active_account: Some("active".to_string()),
             current_account: None,
             previous_account: None,
             accounts: entries,

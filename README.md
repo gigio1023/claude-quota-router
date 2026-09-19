@@ -1,6 +1,6 @@
 # Claude Quota Router
 
-Claude Quota Router switches saved Claude Code accounts on macOS and shows quota timing in the statusline. Personal, team, and enterprise plans are all routed the same way.
+Claude Quota Router switches saved Claude Code accounts and shows quota timing in the statusline. Personal, team, and enterprise plans are all routed the same way.
 
 ## Scenario
 
@@ -13,6 +13,18 @@ me@work.com account
   -> me@work.com reset countdown
   -> switch back to me@work.com
 ```
+
+## Platforms
+
+| Platform | Credential store | Desktop notifications | Verification |
+|---|---|---|---|
+| macOS | Keychain, through `security` | `osascript` | built and run |
+| Linux | owner-only files | `notify-send` | compiles and unit tested, not run |
+| Windows | files under the profile ACL | none, the statusline carries the message | compiles and unit tested, not run |
+
+Where there is no Keychain, the active credential is Claude Code's own `.credentials.json` and saved accounts are files in an `accounts` directory. Both are replaced by renaming a freshly created owner-only file over the old one, and a symlink at either path is refused, which is the treatment Claude Code gives its own file. That backend is compiled and unit tested on every platform, including macOS, so its behavior is covered even where it is not the one in use.
+
+`install.sh` is a POSIX shell script and covers macOS and Linux. On Windows, build with `cargo build --release`, copy `target\release\claude-quota-router.exe` somewhere on `PATH`, and add that directory with `setx PATH`.
 
 ## Install
 
@@ -112,23 +124,30 @@ Two rules keep auto mode from acting on stale readings. Only the account Claude 
 
 ## Storage
 
+The configuration directory is `%APPDATA%\claude-quota-router` on Windows, `$XDG_CONFIG_HOME/claude-quota-router` on Linux when that variable is set, and `~/.config/claude-quota-router` otherwise.
+
+| Data | macOS | Linux and Windows |
+|---|---|---|
+| Active Claude Code credential | Keychain service `Claude Code-credentials` | `.credentials.json` in Claude Code's config directory |
+| Saved account credentials | Keychain service `claude-quota-router` | `accounts/<name>.json` in the configuration directory |
+
 | Data | Location |
 |---|---|
-| Saved account credentials | macOS Keychain service `claude-quota-router` |
-| Active Claude Code credential | macOS Keychain service `Claude Code-credentials` |
-| Account metadata | `~/.config/claude-quota-router/state.json` |
-| Alert, mode, and account order | `~/.config/claude-quota-router/config.json` |
-| Quota cache, one entry per account | `~/.config/claude-quota-router/rate-limits.json` |
+| Account metadata | `state.json` in the configuration directory |
+| Alert, mode, and account order | `config.json` in the configuration directory |
+| Quota cache, one entry per account | `rate-limits.json` in the configuration directory |
 | Claude Code settings the wrapper edits | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` |
 
-Switching replaces the Keychain credential only. The `oauthAccount` block in `~/.claude.json` still describes the previous account until Claude Code refetches the profile.
+Switching replaces the active credential only. The `oauthAccount` block in `~/.claude.json` still describes the previous account until Claude Code refetches the profile.
 
 ## Verify
 
-Run the checks before publishing a change.
+Run the checks before publishing a change. The cross target checks type check the platform branches that the host cannot run.
 
 ```bash
 cargo test
 cargo clippy --all-targets -- -D warnings
+cargo clippy --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 cargo build --release
 ```

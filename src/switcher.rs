@@ -5,8 +5,8 @@
 //! activate the target credential, update state, then reset quota side effects.
 
 use crate::context::AppContext;
+use crate::credentials;
 use crate::domain::{AccountName, State};
-use crate::keychain;
 use crate::notification;
 use crate::storage;
 use crate::time::now_epoch;
@@ -30,20 +30,14 @@ pub(crate) fn switch_to(
     }
     confirm_switch(name, options.yes)?;
 
-    let active_account = match &state.active_account {
-        Some(account) => account.clone(),
-        None => keychain::detect_active_account()?,
-    };
+    refresh_current_backup(ctx, &state, name)?;
 
-    refresh_current_backup(&state, name, &active_account)?;
-
-    let target_credential = keychain::read_account(name)
+    let target_credential = credentials::read_saved(ctx, name)
         .with_context(|| format!("failed to read saved credential for {name}"))?;
-    let active_credential = keychain::read_active(&active_account).unwrap_or_default();
+    let active_credential = credentials::read_active(ctx).unwrap_or_default();
     let old_current = state.current_account.clone();
 
     if active_credential == target_credential {
-        state.active_account = Some(active_account);
         state.current_account = Some(name.to_string());
         storage::save_state(ctx, &state)?;
         if options.emit {
@@ -52,13 +46,12 @@ pub(crate) fn switch_to(
         return Ok(());
     }
 
-    keychain::upsert_active(&active_account, &target_credential)
+    credentials::write_active(ctx, &target_credential)
         .with_context(|| format!("failed to activate account {name}"))?;
 
     if old_current.as_deref() != Some(name.as_str()) {
         state.previous_account = old_current;
     }
-    state.active_account = Some(active_account);
     state.current_account = Some(name.to_string());
     state.switched_at = Some(now_epoch());
     storage::save_state(ctx, &state)?;
@@ -72,18 +65,16 @@ pub(crate) fn switch_to(
     Ok(())
 }
 
-pub(crate) fn detect_current_account_by_credential(state: &mut State) -> Result<Option<String>> {
-    let account = match &state.active_account {
-        Some(account) => account.clone(),
-        None => keychain::detect_active_account()?,
-    };
-    let active = keychain::read_active(&account)?;
+pub(crate) fn detect_current_account_by_credential(
+    ctx: &AppContext,
+    state: &mut State,
+) -> Result<Option<String>> {
+    let active = credentials::read_active(ctx)?;
     for name in state.accounts.keys() {
         let account_name = AccountName::parse(name)?;
-        if let Ok(saved) = keychain::read_account(&account_name)
+        if let Ok(saved) = credentials::read_saved(ctx, &account_name)
             && saved == active
         {
-            state.active_account = Some(account);
             state.current_account = Some(name.clone());
             return Ok(Some(name.clone()));
         }
@@ -96,21 +87,16 @@ pub(crate) fn detect_current_account_by_credential(state: &mut State) -> Result<
 /// Claude Code may refresh OAuth tokens while the account is active. Capturing the
 /// current credential immediately before switching prevents restoring an older
 /// token the next time the user switches back to this account.
-fn refresh_current_backup(
-    state: &State,
-    target: &AccountName,
-    active_account: &str,
-) -> Result<()> {
+fn refresh_current_backup(ctx: &AppContext, state: &State, target: &AccountName) -> Result<()> {
     if let Some(current_account) = state.current_account.as_deref()
         && current_account != target.as_str()
         && state.accounts.contains_key(current_account)
-        && let Ok(current_credential) = keychain::read_active(active_account)
+        && let Ok(current_credential) = credentials::read_active(ctx)
     {
         let current_name = AccountName::parse(current_account)?;
-        keychain::upsert_account(&current_name, &current_credential)
-            .with_context(|| {
-                format!("failed to update current account backup for {current_account}")
-            })?;
+        credentials::write_saved(ctx, &current_name, &current_credential).with_context(|| {
+            format!("failed to update current account backup for {current_account}")
+        })?;
     }
     Ok(())
 }
@@ -132,8 +118,8 @@ fn clear_quota_side_effects(ctx: &AppContext, target: &AccountName) -> Result<()
 /// Require an explicit acknowledgement before touching the active credential.
 ///
 /// Statusline auto-switch and Claude Code bang commands use `--yes`; interactive
-/// shell use gets a prompt so a typo does not silently replace the Keychain
-/// credential read by every running Claude Code session.
+/// shell use gets a prompt so a typo does not silently replace the credential
+/// read by every running Claude Code session.
 fn confirm_switch(name: &AccountName, yes: bool) -> Result<()> {
     if yes {
         return Ok(());

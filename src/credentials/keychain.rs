@@ -1,46 +1,63 @@
-//! macOS Keychain adapter.
+//! macOS Keychain backend.
 //!
 //! This is the only module that talks to the `security` command. Keeping the
 //! boundary narrow makes it clear where secret material can enter process memory
-//! and keeps persistence code from accidentally writing credentials to disk. A
-//! port to another platform replaces this module's body rather than its callers.
+//! and keeps persistence code from accidentally writing credentials to disk.
 
+use crate::context::AppContext;
 use crate::domain::AccountName;
 use anyhow::{Context, Result, anyhow, bail};
 use std::process::Command;
+use std::sync::OnceLock;
 
 const ACTIVE_SERVICE: &str = "Claude Code-credentials";
 const ACCOUNT_SERVICE: &str = "claude-quota-router";
 
+pub(crate) fn describe(_ctx: &AppContext) -> String {
+    format!("macOS Keychain, services {ACTIVE_SERVICE} and {ACCOUNT_SERVICE}")
+}
+
 /// Read the credential Claude Code currently uses.
 ///
 /// The returned string is secret material. Callers should pass it directly to
-/// another Keychain operation or to a short-lived in-memory comparison.
-pub(crate) fn read_active(account: &str) -> Result<String> {
-    read(ACTIVE_SERVICE, account)
+/// another credential operation or to a short-lived in-memory comparison.
+pub(crate) fn read_active(_ctx: &AppContext) -> Result<String> {
+    read(ACTIVE_SERVICE, active_account()?)
 }
 
 /// Replace the active Claude Code credential with a previously saved account.
-pub(crate) fn upsert_active(account: &str, credential: &str) -> Result<()> {
-    upsert(ACTIVE_SERVICE, account, credential)
+pub(crate) fn write_active(_ctx: &AppContext, credential: &str) -> Result<()> {
+    upsert(ACTIVE_SERVICE, active_account()?, credential)
 }
 
-/// Read a saved account credential from the app-owned Keychain service.
-pub(crate) fn read_account(name: &AccountName) -> Result<String> {
+pub(crate) fn read_saved(_ctx: &AppContext, name: &AccountName) -> Result<String> {
     read(ACCOUNT_SERVICE, &stored_account(name))
 }
 
 /// Store an account credential without writing it to the filesystem.
-pub(crate) fn upsert_account(name: &AccountName, credential: &str) -> Result<()> {
+pub(crate) fn write_saved(_ctx: &AppContext, name: &AccountName, credential: &str) -> Result<()> {
     upsert(ACCOUNT_SERVICE, &stored_account(name), credential)
 }
 
-pub(crate) fn delete_account(name: &AccountName) -> Result<()> {
+pub(crate) fn delete_saved(_ctx: &AppContext, name: &AccountName) -> Result<()> {
     delete(ACCOUNT_SERVICE, &stored_account(name))
 }
 
-/// The Keychain account name under which Claude Code stores its credential.
-pub(crate) fn detect_active_account() -> Result<String> {
+/// The Keychain account name Claude Code files its credential under.
+///
+/// It does not change while the process runs, and resolving it costs a
+/// `security` invocation, so it is resolved once.
+fn active_account() -> Result<&'static str> {
+    static ACCOUNT: OnceLock<Option<String>> = OnceLock::new();
+    ACCOUNT
+        .get_or_init(|| detect_active_account().ok())
+        .as_deref()
+        .ok_or_else(|| {
+            anyhow!("Claude Code credential not found in Keychain; log in with claude first")
+        })
+}
+
+fn detect_active_account() -> Result<String> {
     let output = Command::new("security")
         .args(["find-generic-password", "-s", ACTIVE_SERVICE])
         .output()

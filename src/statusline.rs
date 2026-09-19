@@ -14,9 +14,9 @@ use crate::time::now_epoch;
 use crate::util::humanize;
 use anyhow::{Context, Result};
 use serde_json::Value;
+use crate::shell;
 use std::fs;
-use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::io;
 
 const APP_TITLE: &str = "claude-quota-router";
 
@@ -279,23 +279,7 @@ fn run_inner_statusline(ctx: &AppContext, input: &str) -> Option<String> {
     // Existing statusline commands are intentionally executed as the shell
     // command Claude Code already accepted in settings.json. The wrapper only
     // preserves compatibility; it does not reinterpret the user's command.
-    let mut child = Command::new("/bin/sh")
-        .arg("-lc")
-        .arg(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes()).ok()?;
-    }
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() { None } else { Some(text) }
+    shell::run_statusline(command, input)
 }
 
 #[cfg(test)]

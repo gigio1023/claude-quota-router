@@ -4,7 +4,7 @@
 //! wrapper without losing a user's existing statusline command.
 
 use crate::context::AppContext;
-use crate::util::shell_quote;
+use crate::shell;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::env;
@@ -80,7 +80,7 @@ fn current_command(settings: &Value) -> Option<String> {
 
 fn statusline_command() -> Result<String> {
     let exe = env::current_exe().context("failed to find current executable")?;
-    Ok(format!("{} statusline", shell_quote(&exe)))
+    Ok(format!("{} statusline", shell::quote(&exe)))
 }
 
 fn is_our_statusline_command(command: &str) -> bool {
