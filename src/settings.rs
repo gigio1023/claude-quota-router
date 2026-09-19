@@ -19,20 +19,28 @@ pub(crate) fn install_statusline(ctx: &AppContext) -> Result<()> {
     let mut settings = load_settings(&settings_path)?;
     let command = statusline_command()?;
 
-    if let Some(existing) = settings
-        .get("statusLine")
-        .and_then(|value| value.get("command"))
-        .and_then(Value::as_str)
-        && !is_our_statusline_command(existing)
+    if let Some(existing) = current_command(&settings)
+        && !is_our_statusline_command(&existing)
     {
-        fs::write(ctx.inner_statusline_path(), existing)
+        fs::write(ctx.inner_statusline_path(), &existing)
             .context("failed to save prior statusline command")?;
     }
 
-    settings["statusLine"] = json!({
-        "type": "command",
-        "command": command,
-    });
+    // Only the command is replaced. Claude Code accepts other keys on this
+    // object, such as `padding`, and they belong to the user rather than to the
+    // wrapper.
+    match settings.get_mut("statusLine").filter(|value| value.is_object()) {
+        Some(entry) => {
+            entry["type"] = json!("command");
+            entry["command"] = json!(command);
+        }
+        None => {
+            settings["statusLine"] = json!({
+                "type": "command",
+                "command": command,
+            });
+        }
+    }
     save_settings(&settings_path, &settings)?;
     println!("installed Claude Code statusLine wrapper");
     Ok(())
@@ -41,12 +49,7 @@ pub(crate) fn install_statusline(ctx: &AppContext) -> Result<()> {
 pub(crate) fn uninstall_statusline(ctx: &AppContext) -> Result<()> {
     let settings_path = ctx.settings_path();
     let mut settings = load_settings(&settings_path)?;
-    let current = settings
-        .get("statusLine")
-        .and_then(|value| value.get("command"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let current = current_command(&settings).unwrap_or_default();
 
     if !is_our_statusline_command(&current) {
         println!("statusLine wrapper is not installed");
@@ -57,10 +60,7 @@ pub(crate) fn uninstall_statusline(ctx: &AppContext) -> Result<()> {
     if inner_path.exists() {
         let inner = fs::read_to_string(&inner_path)
             .context("failed to read saved prior statusline command")?;
-        settings["statusLine"] = json!({
-            "type": "command",
-            "command": inner.trim(),
-        });
+        settings["statusLine"]["command"] = json!(inner.trim());
     } else if let Some(object) = settings.as_object_mut() {
         object.remove("statusLine");
     }
@@ -68,6 +68,14 @@ pub(crate) fn uninstall_statusline(ctx: &AppContext) -> Result<()> {
     save_settings(&settings_path, &settings)?;
     println!("uninstalled Claude Code statusLine wrapper");
     Ok(())
+}
+
+fn current_command(settings: &Value) -> Option<String> {
+    settings
+        .get("statusLine")
+        .and_then(|value| value.get("command"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn statusline_command() -> Result<String> {
