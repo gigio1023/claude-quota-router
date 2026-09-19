@@ -34,7 +34,7 @@ impl App {
 
     pub(crate) fn handle(&self, command: Commands) -> Result<()> {
         match command {
-            Commands::Setup { name, kind } => self.setup(&name, kind),
+            Commands::Setup { name, kind } => self.setup(name, kind),
             Commands::Switch { name, yes } => self.switch(&name, yes),
             Commands::Toggle { yes } => self.toggle(yes),
             Commands::List => self.list(),
@@ -52,8 +52,22 @@ impl App {
         }
     }
 
-    fn setup(&self, name: &str, kind: Option<AccountKind>) -> Result<()> {
-        let name = AccountName::parse(name)?;
+    /// Save the active credential under an account name.
+    ///
+    /// The name defaults to the account's email address so that two logins are
+    /// told apart by the thing that actually differs between them.
+    fn setup(&self, name: Option<String>, kind: Option<AccountKind>) -> Result<()> {
+        let status = claude::auth_status();
+        let name = match name {
+            Some(value) => AccountName::parse(&value)?,
+            None => {
+                let email = status.as_ref().and_then(|status| status.email.as_deref());
+                let email = email.ok_or_else(|| {
+                    anyhow!("claude auth status reported no email; pass an account name")
+                })?;
+                AccountName::parse(email)?
+            }
+        };
         self.ctx.ensure_app_dir()?;
 
         let mut state = storage::load_state(&self.ctx)?;
@@ -68,10 +82,12 @@ impl App {
             .keychain
             .read_active(&active_account)
             .context("failed to read active Claude Code credential from Keychain")?;
-        // Prefer an explicit CLI override for import/migration cases. Otherwise
-        // ask Claude Code first and fall back to the credential JSON shape.
-        let kind =
-            kind.unwrap_or_else(|| claude::detect_account_kind_from_active_credential(&credential));
+        // Prefer an explicit CLI override for import and migration cases,
+        // then what Claude Code reports, then the credential JSON shape.
+        let kind = kind
+            .or_else(|| status.as_ref().and_then(|status| status.kind))
+            .or_else(|| claude::detect_account_kind_from_credential(&credential))
+            .unwrap_or(AccountKind::Other);
 
         self.keychain
             .upsert_account(&name, &credential)

@@ -21,23 +21,29 @@ pub(crate) struct AccountName(String);
 impl AccountName {
     /// Validate and normalize a user supplied account name.
     ///
-    /// The tool stores account credentials under Keychain account names derived
-    /// from this value. Restricting the character set keeps those derived names
-    /// predictable and avoids shell-looking or path-looking identifiers.
+    /// The default name is the account's email address, which is what
+    /// distinguishes one login from another at a glance. The character set is
+    /// therefore wide enough for an address and still narrow enough to keep the
+    /// derived Keychain account names free of shell-looking or path-looking
+    /// characters. Names are compared after lowercasing, as addresses are.
     pub(crate) fn parse(input: &str) -> Result<Self> {
-        if input.is_empty() || input.len() > 64 {
-            bail!("account name must be 1-64 characters");
+        let value = input.trim().to_ascii_lowercase();
+        if value.is_empty() || value.len() > 128 {
+            bail!("account name must be 1-128 characters");
         }
-        if input.starts_with('-') || input.ends_with('-') || input.contains("--") {
-            bail!("account name cannot start/end with '-' or contain '--'");
+        if value.starts_with('-') || value.ends_with('-') {
+            bail!("account name cannot start or end with '-'");
         }
-        if !input
+        if !value
             .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '+' | '@'))
         {
-            bail!("account name must use lowercase letters, digits, and '-' only");
+            bail!("account name must use letters, digits, and - . _ + @ only");
         }
-        Ok(Self(input.to_string()))
+        if !value.chars().any(|ch| ch.is_ascii_alphanumeric()) {
+            bail!("account name must contain a letter or a digit");
+        }
+        Ok(Self(value))
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -268,13 +274,15 @@ mod tests {
     }
 
     #[test]
-    fn validates_account_names() {
-        assert!(AccountName::parse("team").is_ok());
-        assert!(AccountName::parse("team-2").is_ok());
-        assert!(AccountName::parse("Team").is_err());
+    fn accepts_email_addresses_and_lowercases_them() {
+        assert_eq!(
+            AccountName::parse("Relilau00+work@Gmail.com").unwrap().as_str(),
+            "relilau00+work@gmail.com"
+        );
+        assert!(AccountName::parse("team-main").is_ok());
         assert!(AccountName::parse("-team").is_err());
-        assert!(AccountName::parse("team-").is_err());
-        assert!(AccountName::parse("team--2").is_err());
+        assert!(AccountName::parse("team main").is_err());
+        assert!(AccountName::parse("...").is_err());
     }
 
     #[test]

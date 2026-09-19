@@ -20,8 +20,8 @@ struct Cli {
 pub(crate) enum Commands {
     /// Save the active Claude Code credential as a named account.
     Setup {
-        /// Account name, for example personal-main, team-main, or enterprise-main.
-        name: String,
+        /// Account name. Defaults to the email claude auth status reports.
+        name: Option<String>,
         /// Override the plan kind. If omitted, claude auth status is used.
         #[arg(long, value_enum)]
         kind: Option<AccountKind>,

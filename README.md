@@ -7,11 +7,11 @@ Claude Quota Router switches saved Claude Code accounts on macOS and shows quota
 Use it when the account you prefer is near its limit and another saved account should carry the work until the first one resets.
 
 ```text
-team-main account
+me@work.com account
   -> quota alert in statusline
-  -> switch to personal-main
-  -> team-main reset countdown
-  -> switch back to team-main
+  -> switch to me@gmail.com
+  -> me@work.com reset countdown
+  -> switch back to me@work.com
 ```
 
 ## Install
@@ -25,22 +25,21 @@ cp target/release/claude-quota-router ~/.local/bin/
 
 ## Setup
 
-Save each Claude Code login once. Use any lowercase account name. The plan kind comes from `claude auth status`: `max`, `pro`, and `free` are saved as `personal`, and `team` and `enterprise` keep their own names.
+Save each Claude Code login once. The account name defaults to the email address that `claude auth status` reports, which is what tells two logins apart. The plan kind comes from the same command: `max`, `pro`, and `free` are saved as `personal`, and `team` and `enterprise` keep their own names.
 
 1. Log in with the first account and save it.
 
 ```bash
-claude-quota-router setup personal-main
+claude-quota-router setup
 ```
 
 2. Log out, log in with the next account, then save it. Repeat for every account.
 
 ```bash
-claude-quota-router setup team-main
-claude-quota-router setup enterprise-main
+claude-quota-router setup
 ```
 
-Pass `--kind` when the plan should be recorded as something other than what `claude auth status` reports.
+Pass a name when a shorter one reads better, and `--kind` when the plan should be recorded as something other than what `claude auth status` reports.
 
 ```bash
 claude-quota-router setup team-side --kind team
@@ -56,7 +55,7 @@ claude-quota-router install
 
 ```bash
 claude-quota-router config --alert-at 95 --mode manual
-claude-quota-router config --priority team-main,personal-main,enterprise-main
+claude-quota-router config --priority me@work.com,me@gmail.com
 ```
 
 Accounts missing from `--priority` fall in behind it by plan kind, in the order personal, team, enterprise, other. Pass `--priority ''` to clear the list.
@@ -66,7 +65,7 @@ Accounts missing from `--priority` fall in behind it by plan kind, in the order 
 Switch accounts from a shell or from Claude Code with `!`.
 
 ```bash
-claude-quota-router switch personal-main --yes
+claude-quota-router switch me@gmail.com --yes
 claude-quota-router toggle --yes
 claude-quota-router list
 claude-quota-router status
@@ -75,9 +74,9 @@ claude-quota-router status
 `list` prints accounts in routing order with the last quota reading for each one.
 
 ```text
-  1. team-main	team	100%(5h) reset in 2h10m(5h)
-* 2. personal-main	personal	42%(5h)
-  3. enterprise-main	enterprise	-
+  1. me@work.com	team	100%(5h) reset in 2h10m(5h)
+* 2. me@gmail.com	personal	42%(5h)
+  3. me@enterprise.com	enterprise	-
 ```
 
 ## Auto Mode
