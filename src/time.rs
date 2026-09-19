@@ -12,3 +12,8 @@ pub(crate) fn now_epoch() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+/// Same instant as [`now_epoch`], typed for arithmetic against reset times.
+pub(crate) fn now_epoch_i64() -> i64 {
+    now_epoch() as i64
+}

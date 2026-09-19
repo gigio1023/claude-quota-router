@@ -5,20 +5,29 @@
 //! when quota data is absent.
 
 use crate::context::AppContext;
-use crate::domain::{
-    AccountKind, AccountName, Config, LimitWindow, RateLimitSnapshot, RouteLock, RoutingMode, State,
-};
+use crate::domain::{AccountName, Config, LimitWindow, RateLimitSnapshot, RoutingMode, State};
 use crate::keychain::Keychain;
 use crate::notification;
 use crate::routing;
 use crate::storage;
 use crate::switcher::{self, SwitchOptions};
-use crate::time::now_epoch;
+use crate::time::{now_epoch, now_epoch_i64};
+use crate::util::humanize;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::fs;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
+
+const APP_TITLE: &str = "claude-quota-router";
+
+/// How long quota readings are ignored after a switch.
+///
+/// The statusline payload carries no account identity, and a running Claude Code
+/// session keeps reporting the quota of the account it started with. Filing that
+/// reading under the new account would both corrupt the cache and bounce the
+/// router straight back out of the account it just entered.
+const SWITCH_GRACE: i64 = 90;
 
 pub(crate) fn handle(ctx: &AppContext, keychain: &Keychain) -> Result<()> {
     let input = read_stdin_to_string()?;
@@ -34,7 +43,9 @@ pub(crate) fn handle(ctx: &AppContext, keychain: &Keychain) -> Result<()> {
     let inner_output = run_inner_statusline(ctx, &input);
     let state = storage::load_state(ctx)?;
     let config = storage::load_config(ctx)?;
-    let router_output = render_router_output(ctx, keychain, &state, &config, &parsed)?;
+    // A broken state file or a failed Keychain read must not blank the whole
+    // statusline, which would take the user's own command down with it.
+    let router_output = render_router_output(ctx, keychain, &state, &config, &parsed).unwrap_or(None);
 
     match (router_output.as_deref(), inner_output.as_deref()) {
         (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => println!("{a} | {b}"),
@@ -53,249 +64,197 @@ fn render_router_output(
     config: &Config,
     input: &Value,
 ) -> Result<Option<String>> {
-    let current_account = match state.current_account.as_deref() {
-        Some(value) => value,
-        None => return Ok(None),
-    };
-    let current_kind = match state.accounts.get(current_account) {
-        Some(entry) => entry.kind,
-        None => return Ok(None),
-    };
-
-    match current_kind {
-        AccountKind::Team => render_team(ctx, keychain, state, config, current_account, input),
-        AccountKind::Enterprise => render_enterprise(ctx, keychain, state, config, current_account),
-        AccountKind::Other => Ok(Some(current_account.to_string())),
-    }
-}
-
-fn render_team(
-    ctx: &AppContext,
-    keychain: &Keychain,
-    state: &State,
-    config: &Config,
-    current_account: &str,
-    input: &Value,
-) -> Result<Option<String>> {
-    let snapshot = match parse_rate_limits(input) {
-        Some(snapshot) => snapshot,
-        None => return Ok(None),
-    };
-    ctx.ensure_app_dir()?;
-    // Persist every valid snapshot, including below-threshold usage. If the
-    // user routes to an enterprise account early, the enterprise statusline can
-    // still count down to the previously observed team reset time.
-    storage::save_rate_limits(ctx, &snapshot)?;
-
-    let Some((label, pct)) = max_limit(&snapshot) else {
+    let Some(current) = state.current_account.as_deref() else {
         return Ok(None);
     };
-
-    if pct < config.alert_at {
+    if !state.accounts.contains_key(current) {
         return Ok(None);
     }
 
-    if pct >= 100 {
-        if config.mode == RoutingMode::Auto
-            && let Some(target) = routing::enterprise_target(state, current_account)
-        {
-            return auto_route_to_enterprise(ctx, keychain, &target);
+    let now = now_epoch_i64();
+    let settling = is_settling(state, now);
+    let mut cache = storage::load_rate_limits(ctx)?;
+
+    if !settling
+        && let Some(snapshot) = parse_rate_limits(input)
+    {
+        ctx.ensure_app_dir()?;
+        cache.accounts.insert(current.to_string(), snapshot);
+        storage::save_rate_limits(ctx, &cache)?;
+    }
+
+    let mut routing_failed = false;
+    if !settling && config.mode == RoutingMode::Auto {
+        match auto_route(ctx, keychain, state, config, &cache, current, now) {
+            Ok(Some(message)) => return Ok(Some(message)),
+            Ok(None) => {}
+            // A switch can fail on a missing or locked Keychain entry. Say so in
+            // the statusline and keep rendering rather than dropping the line.
+            Err(_) => routing_failed = true,
         }
-        let event_key = format!("team-limit:{current_account}");
-        notification::notify_once(
-            ctx,
-            &event_key,
-            "claude-quota-router",
-            &format!("{current_account} quota is full. Run claude-quota-router list."),
-        )
-        .ok();
-        return Ok(Some(format!(
-            "{current_account} LIMIT({label}) -> claude-quota-router list"
-        )));
     }
 
-    let event_key = format!("team-alert:{current_account}");
-    notification::notify_once(
+    Ok(Some(render_segments(
         ctx,
-        &event_key,
-        "claude-quota-router",
-        &format!("{current_account} usage is {pct}% ({label}). Prepare to switch."),
-    )
-    .ok();
-    Ok(Some(format!(
-        "{current_account} {pct}%({label}) -> claude-quota-router list"
+        state,
+        config,
+        &cache,
+        current,
+        now,
+        routing_failed,
     )))
 }
 
-fn render_enterprise(
+/// Move off an account that is at its limit, or back to one that has reset.
+fn auto_route(
     ctx: &AppContext,
     keychain: &Keychain,
     state: &State,
     config: &Config,
-    current_account: &str,
+    cache: &crate::domain::RateLimitCache,
+    current: &str,
+    now: i64,
 ) -> Result<Option<String>> {
-    let Some(snapshot) = storage::load_rate_limits(ctx)? else {
-        return Ok(Some(current_account.to_string()));
-    };
-    let lock = storage::load_route_lock(ctx)?;
-    let source_account = lock
-        .as_ref()
-        .map(|value| value.source_account.as_str())
-        .unwrap_or("team account");
-    // The first reset to arrive is the first point at which returning to a team
-    // account is useful. Showing the earliest window keeps the prompt actionable.
-    let Some((label, reset_at)) = earliest_reset(&snapshot) else {
-        return Ok(Some(current_account.to_string()));
-    };
-    let remaining = reset_at - now_epoch() as i64;
-
-    if remaining <= 0 {
-        if config.mode == RoutingMode::Auto
-            && let Some(target) = team_return_target(ctx, state, current_account, lock.as_ref())
-        {
-            return auto_switch(ctx, keychain, &target, &format!("auto routed to {target}"));
-        }
-        let event_key = format!("reset:{source_account}");
-        notification::notify_once(
-            ctx,
-            &event_key,
-            "claude-quota-router",
-            &format!("{source_account} quota reset is complete. Run claude-quota-router list."),
-        )
-        .ok();
-        return Ok(Some(format!(
-            "{source_account} reset done -> claude-quota-router list"
-        )));
+    if let Some(target) = routing::return_target(state, config, cache, current, now) {
+        return switch_and_report(ctx, keychain, &target);
     }
-
-    if remaining <= 60 {
-        let event_key = format!("reset-1min:{source_account}");
-        notification::notify_once(
-            ctx,
-            &event_key,
-            "claude-quota-router",
-            &format!("{source_account} quota resets within 1 minute."),
-        )
-        .ok();
-        return Ok(Some(format!(
-            "{source_account} reset in {remaining}s({label}) -> claude-quota-router list"
-        )));
+    if is_blocked(cache, current, now)
+        && let Some(target) = routing::next_target(state, config, cache, current, now)
+    {
+        return switch_and_report(ctx, keychain, &target);
     }
-    if remaining <= 300 {
-        let minutes = (remaining + 59) / 60;
-        let event_key = format!("reset-5min:{source_account}");
-        notification::notify_once(
-            ctx,
-            &event_key,
-            "claude-quota-router",
-            &format!("{source_account} quota resets in {minutes} minutes."),
-        )
-        .ok();
-        return Ok(Some(format!(
-            "{source_account} reset in {minutes}m({label}) -> claude-quota-router list"
-        )));
-    }
-
-    let minutes = remaining / 60;
-    if minutes >= 60 {
-        Ok(Some(format!(
-            "{current_account} | {source_account} reset in {}h{}m({label})",
-            minutes / 60,
-            minutes % 60
-        )))
-    } else {
-        Ok(Some(format!(
-            "{current_account} | {source_account} reset in {minutes}m({label})"
-        )))
-    }
+    Ok(None)
 }
 
-fn auto_route_to_enterprise(
+fn switch_and_report(
     ctx: &AppContext,
     keychain: &Keychain,
     target: &str,
 ) -> Result<Option<String>> {
-    auto_switch(ctx, keychain, target, &format!("auto routed to {target}"))?;
-    Ok(Some(format!(
-        "auto routed to {target}; restart Claude Code"
-    )))
-}
-
-fn auto_switch(
-    ctx: &AppContext,
-    keychain: &Keychain,
-    target: &str,
-    message: &str,
-) -> Result<Option<String>> {
-    let target = AccountName::parse(target)?;
+    let name = AccountName::parse(target)?;
     switcher::switch_to(
         ctx,
         keychain,
-        &target,
+        &name,
         SwitchOptions {
             yes: true,
             emit: false,
         },
     )?;
-    Ok(Some(format!("{message}; restart Claude Code")))
+    Ok(Some(format!("routed to {target}; restart Claude Code")))
 }
 
-fn team_return_target(
+fn render_segments(
     ctx: &AppContext,
     state: &State,
-    current_account: &str,
-    lock: Option<&RouteLock>,
-) -> Option<String> {
-    if let Some(lock) = lock
-        && let Some(target) = routing::locked_team_target(state, current_account, lock)
+    config: &Config,
+    cache: &crate::domain::RateLimitCache,
+    current: &str,
+    now: i64,
+    routing_failed: bool,
+) -> String {
+    let mut segments = vec![current.to_string()];
+    let mut actionable = routing_failed;
+
+    if let Some(snapshot) = cache.accounts.get(current)
+        && let Some((label, pct)) = snapshot.peak_usage()
+        && pct >= config.alert_at
     {
-        return Some(target);
+        if pct >= 100 {
+            segments.push(format!("LIMIT({label})"));
+            notify(
+                ctx,
+                &format!("limit:{current}"),
+                &format!("{current} quota is full."),
+            );
+            actionable = true;
+        } else {
+            segments.push(format!("{pct}%({label})"));
+            notify(
+                ctx,
+                &format!("alert:{current}"),
+                &format!("{current} usage is {pct}% ({label}). Prepare to switch."),
+            );
+        }
     }
-    if ctx.route_lock_path().exists() {
-        return routing::previous_team_target(state, current_account);
+
+    if let Some(name) = routing::return_target(state, config, cache, current, now) {
+        segments.push(format!("{name} reset done"));
+        notify(
+            ctx,
+            &format!("reset:{name}"),
+            &format!("{name} quota reset is complete."),
+        );
+        actionable = true;
+    } else if let Some((name, label, reset)) =
+        routing::pending_recovery(state, config, cache, current, now)
+    {
+        let remaining = reset - now;
+        segments.push(format!("{name} reset in {}({label})", humanize(remaining)));
+        notify_reset_soon(ctx, &name, remaining);
     }
-    None
+
+    if routing_failed {
+        segments.push("route failed".to_string());
+    }
+    if actionable {
+        segments.push("-> claude-quota-router list".to_string());
+    }
+    segments.join(" ")
+}
+
+fn notify(ctx: &AppContext, key: &str, message: &str) {
+    notification::notify_once(ctx, key, APP_TITLE, message).ok();
+}
+
+fn notify_reset_soon(ctx: &AppContext, account: &str, remaining: i64) {
+    if remaining <= 60 {
+        notify(
+            ctx,
+            &format!("reset-1min:{account}"),
+            &format!("{account} quota resets within 1 minute."),
+        );
+    } else if remaining <= 300 {
+        let minutes = (remaining as u64).div_ceil(60);
+        notify(
+            ctx,
+            &format!("reset-5min:{account}"),
+            &format!("{account} quota resets in {minutes} minutes."),
+        );
+    }
+}
+
+fn is_settling(state: &State, now: i64) -> bool {
+    state
+        .switched_at
+        .is_some_and(|at| now.saturating_sub(at as i64) < SWITCH_GRACE)
+}
+
+fn is_blocked(cache: &crate::domain::RateLimitCache, account: &str, now: i64) -> bool {
+    cache
+        .accounts
+        .get(account)
+        .is_some_and(|snapshot| snapshot.is_blocked(now))
 }
 
 fn parse_rate_limits(input: &Value) -> Option<RateLimitSnapshot> {
     let rate_limits = input.get("rate_limits")?;
     Some(RateLimitSnapshot {
         detected_at: now_epoch(),
-        five_hour: LimitWindow {
-            used_percentage: value_to_u8(rate_limits.pointer("/five_hour/used_percentage")),
-            resets_at: value_to_i64(rate_limits.pointer("/five_hour/resets_at")),
-        },
-        seven_day: LimitWindow {
-            used_percentage: value_to_u8(rate_limits.pointer("/seven_day/used_percentage")),
-            resets_at: value_to_i64(rate_limits.pointer("/seven_day/resets_at")),
-        },
+        five_hour: window(rate_limits, "five_hour"),
+        seven_day: window(rate_limits, "seven_day"),
+        spend_limit: window(rate_limits, "spend_limit"),
     })
 }
 
-fn max_limit(snapshot: &RateLimitSnapshot) -> Option<(&'static str, u8)> {
-    let mut best: Option<(&'static str, u8)> = None;
-    if let Some(pct) = snapshot.five_hour.used_percentage {
-        best = Some(("5h", pct));
+fn window(rate_limits: &Value, name: &str) -> LimitWindow {
+    let Some(value) = rate_limits.get(name) else {
+        return LimitWindow::default();
+    };
+    LimitWindow {
+        used_percentage: value_to_u8(value.get("used_percentage")),
+        resets_at: value_to_i64(value.get("resets_at")),
     }
-    if let Some(pct) = snapshot.seven_day.used_percentage
-        && best.is_none_or(|(_, current)| pct > current)
-    {
-        best = Some(("7d", pct));
-    }
-    best
-}
-
-fn earliest_reset(snapshot: &RateLimitSnapshot) -> Option<(&'static str, i64)> {
-    let mut best: Option<(&'static str, i64)> = None;
-    if let Some(reset) = snapshot.five_hour.resets_at {
-        best = Some(("5h", reset));
-    }
-    if let Some(reset) = snapshot.seven_day.resets_at
-        && best.is_none_or(|(_, current)| reset < current)
-    {
-        best = Some(("7d", reset));
-    }
-    best
 }
 
 fn value_to_u8(value: Option<&Value>) -> Option<u8> {
@@ -353,34 +312,27 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parses_rate_limits_from_statusline_json() {
+    fn parses_every_rate_limit_window() {
         let input = json!({
             "rate_limits": {
                 "five_hour": { "used_percentage": 91, "resets_at": 1000 },
-                "seven_day": { "used_percentage": "12", "resets_at": "2000" }
+                "seven_day": { "used_percentage": "12", "resets_at": "2000" },
+                "spend_limit": { "used_percentage": 40, "resets_at": 3000 }
             }
         });
         let parsed = parse_rate_limits(&input).unwrap();
         assert_eq!(parsed.five_hour.used_percentage, Some(91));
-        assert_eq!(parsed.five_hour.resets_at, Some(1000));
         assert_eq!(parsed.seven_day.used_percentage, Some(12));
         assert_eq!(parsed.seven_day.resets_at, Some(2000));
+        assert_eq!(parsed.spend_limit.used_percentage, Some(40));
     }
 
     #[test]
-    fn picks_max_usage_and_earliest_reset() {
-        let snapshot = RateLimitSnapshot {
-            detected_at: 1,
-            five_hour: LimitWindow {
-                used_percentage: Some(80),
-                resets_at: Some(500),
-            },
-            seven_day: LimitWindow {
-                used_percentage: Some(95),
-                resets_at: Some(1000),
-            },
-        };
-        assert_eq!(max_limit(&snapshot), Some(("7d", 95)));
-        assert_eq!(earliest_reset(&snapshot), Some(("5h", 500)));
+    fn ignores_readings_until_the_new_credential_settles() {
+        let mut state = State::default();
+        assert!(!is_settling(&state, 1000));
+        state.switched_at = Some(1000);
+        assert!(is_settling(&state, 1000 + SWITCH_GRACE - 1));
+        assert!(!is_settling(&state, 1000 + SWITCH_GRACE));
     }
 }

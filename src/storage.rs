@@ -5,12 +5,11 @@
 //! and the quota cache used by the statusline countdown.
 
 use crate::context::AppContext;
-use crate::domain::{Config, RateLimitSnapshot, RouteLock, State};
+use crate::domain::{Config, RateLimitCache, State};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::Path;
 
 pub(crate) fn load_state(ctx: &AppContext) -> Result<State> {
@@ -31,48 +30,18 @@ pub(crate) fn save_config(ctx: &AppContext, config: &Config) -> Result<()> {
     save_json(&ctx.config_path(), config)
 }
 
-pub(crate) fn load_rate_limits(ctx: &AppContext) -> Result<Option<RateLimitSnapshot>> {
-    let path = ctx.rate_limits_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let snapshot = fs::read_to_string(&path)
-        .context("failed to read rate limit snapshot")
-        .and_then(|text| {
-            serde_json::from_str(&text).context("failed to parse rate limit snapshot")
-        })?;
-    Ok(Some(snapshot))
+/// Load the per-account quota cache.
+///
+/// A cache written by an older build stored a single snapshot with no account
+/// name. Those files deserialize into an empty cache, which the next statusline
+/// render refills for the account actually in use.
+pub(crate) fn load_rate_limits(ctx: &AppContext) -> Result<RateLimitCache> {
+    load_json_or_default(&ctx.rate_limits_path())
 }
 
-pub(crate) fn save_rate_limits(ctx: &AppContext, snapshot: &RateLimitSnapshot) -> Result<()> {
-    save_json(&ctx.rate_limits_path(), snapshot)
-}
-
-pub(crate) fn load_route_lock(ctx: &AppContext) -> Result<Option<RouteLock>> {
-    let path = ctx.route_lock_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let text =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    if text.trim().is_empty() {
-        return Ok(None);
-    }
-    serde_json::from_str(&text)
-        .with_context(|| format!("failed to parse {}", path.display()))
-        .map(Some)
-}
-
-pub(crate) fn save_route_lock(ctx: &AppContext, lock: &RouteLock) -> Result<()> {
-    save_json(&ctx.route_lock_path(), lock)
-}
-
-pub(crate) fn remove_route_lock(ctx: &AppContext) -> Result<()> {
-    match fs::remove_file(ctx.route_lock_path()) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).context("failed to remove route lock"),
-    }
+pub(crate) fn save_rate_limits(ctx: &AppContext, cache: &RateLimitCache) -> Result<()> {
+    ctx.ensure_app_dir()?;
+    save_json(&ctx.rate_limits_path(), cache)
 }
 
 pub(crate) fn load_notified(ctx: &AppContext) -> Result<BTreeSet<String>> {

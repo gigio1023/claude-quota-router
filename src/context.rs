@@ -63,10 +63,6 @@ impl AppContext {
         self.app_dir.join("notified.json")
     }
 
-    pub(crate) fn route_lock_path(&self) -> PathBuf {
-        self.app_dir.join("auto-route.lock")
-    }
-
     pub(crate) fn inner_statusline_path(&self) -> PathBuf {
         self.app_dir.join("inner-statusline.txt")
     }

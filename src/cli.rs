@@ -20,9 +20,9 @@ struct Cli {
 pub(crate) enum Commands {
     /// Save the active Claude Code credential as a named account.
     Setup {
-        /// Account name, for example team, enterprise, team-2, or backup.
+        /// Account name, for example personal-main, team-main, or enterprise-main.
         name: String,
-        /// Override the account kind. If omitted, claude auth status is used.
+        /// Override the plan kind. If omitted, claude auth status is used.
         #[arg(long, value_enum)]
         kind: Option<AccountKind>,
     },
@@ -45,12 +45,16 @@ pub(crate) enum Commands {
     Current,
     /// Show state, config, and cached quota information.
     Status,
-    /// Read or update statusline alert settings.
+    /// Read or update alert, routing, and account order settings.
     Config {
         #[arg(long)]
         alert_at: Option<u8>,
         #[arg(long, value_enum)]
         mode: Option<RoutingMode>,
+        /// Account order, for example personal-main,team-main,enterprise-main.
+        /// Pass an empty value to clear it.
+        #[arg(long, value_delimiter = ',')]
+        priority: Option<Vec<String>>,
     },
     /// Install the Claude Code statusLine wrapper.
     Install,

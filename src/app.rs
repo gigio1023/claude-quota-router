@@ -6,14 +6,17 @@
 use crate::claude;
 use crate::cli::Commands;
 use crate::context::AppContext;
-use crate::domain::{AccountEntry, AccountName, Config, RoutingMode};
+use crate::domain::{
+    AccountEntry, AccountKind, AccountName, Config, RateLimitSnapshot, RoutingMode, State,
+};
 use crate::keychain::Keychain;
+use crate::routing;
 use crate::settings;
 use crate::statusline;
 use crate::storage;
 use crate::switcher::{self, SwitchOptions};
-use crate::time::now_epoch;
-use crate::util::{display_pct, display_ts};
+use crate::time::{now_epoch, now_epoch_i64};
+use crate::util::{display_pct, humanize};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub(crate) struct App {
@@ -38,14 +41,18 @@ impl App {
             Commands::Remove { name } => self.remove(&name),
             Commands::Current => self.current(),
             Commands::Status => self.status(),
-            Commands::Config { alert_at, mode } => self.config(alert_at, mode),
+            Commands::Config {
+                alert_at,
+                mode,
+                priority,
+            } => self.config(alert_at, mode, priority),
             Commands::Install => settings::install_statusline(&self.ctx),
             Commands::Uninstall => settings::uninstall_statusline(&self.ctx),
             Commands::Statusline => statusline::handle(&self.ctx, &self.keychain),
         }
     }
 
-    fn setup(&self, name: &str, kind: Option<crate::domain::AccountKind>) -> Result<()> {
+    fn setup(&self, name: &str, kind: Option<AccountKind>) -> Result<()> {
         let name = AccountName::parse(name)?;
         self.ctx.ensure_app_dir()?;
 
@@ -114,6 +121,7 @@ impl App {
         self.switch(previous, yes)
     }
 
+    /// Print saved accounts in routing order with their last known quota.
     fn list(&self) -> Result<()> {
         let state = storage::load_state(&self.ctx)?;
         if state.accounts.is_empty() {
@@ -121,13 +129,30 @@ impl App {
             return Ok(());
         }
 
-        for (name, entry) in &state.accounts {
+        let config = storage::load_config(&self.ctx)?;
+        let cache = storage::load_rate_limits(&self.ctx)?;
+        let now = now_epoch_i64();
+
+        for (index, name) in routing::ordered_accounts(&state, &config)
+            .into_iter()
+            .enumerate()
+        {
             let marker = if state.current_account.as_deref() == Some(name.as_str()) {
                 "*"
             } else {
                 " "
             };
-            println!("{marker} {name}\t{}", entry.kind.as_str());
+            let kind = state
+                .accounts
+                .get(&name)
+                .map(|entry| entry.kind.as_str())
+                .unwrap_or("other");
+            let quota = cache
+                .accounts
+                .get(&name)
+                .map(|snapshot| describe_quota(snapshot, now))
+                .unwrap_or_else(|| "-".to_string());
+            println!("{marker} {}. {name}\t{kind}\t{quota}", index + 1);
         }
         Ok(())
     }
@@ -146,6 +171,11 @@ impl App {
             state.previous_account = None;
         }
         storage::save_state(&self.ctx, &state)?;
+
+        let mut cache = storage::load_rate_limits(&self.ctx)?;
+        if cache.accounts.remove(name.as_str()).is_some() {
+            storage::save_rate_limits(&self.ctx, &cache)?;
+        }
         println!("removed account: {name}");
         Ok(())
     }
@@ -172,6 +202,9 @@ impl App {
     fn status(&self) -> Result<()> {
         let state = storage::load_state(&self.ctx)?;
         let config = storage::load_config(&self.ctx)?;
+        let cache = storage::load_rate_limits(&self.ctx)?;
+        let now = now_epoch_i64();
+
         println!(
             "current: {}",
             state.current_account.as_deref().unwrap_or("unknown")
@@ -184,30 +217,28 @@ impl App {
             "active keychain account: {}",
             state.active_account.as_deref().unwrap_or("unknown")
         );
-        println!(
-            "config: alert_at={} mode={}",
-            config.alert_at,
-            config.mode.as_str()
-        );
+        print_config(&config, &state);
         println!("accounts: {}", state.accounts.len());
 
-        if let Some(snapshot) = storage::load_rate_limits(&self.ctx)? {
-            println!(
-                "quota: 5h={} reset={} / 7d={} reset={}",
-                display_pct(snapshot.five_hour.used_percentage),
-                display_ts(snapshot.five_hour.resets_at),
-                display_pct(snapshot.seven_day.used_percentage),
-                display_ts(snapshot.seven_day.resets_at)
-            );
-        } else {
+        if cache.accounts.is_empty() {
             println!("quota: none");
+            return Ok(());
         }
-
+        println!("quota:");
+        for (name, snapshot) in &cache.accounts {
+            println!("  {name}\t{}", describe_quota(snapshot, now));
+        }
         Ok(())
     }
 
-    fn config(&self, alert_at: Option<u8>, mode: Option<RoutingMode>) -> Result<()> {
+    fn config(
+        &self,
+        alert_at: Option<u8>,
+        mode: Option<RoutingMode>,
+        priority: Option<Vec<String>>,
+    ) -> Result<()> {
         self.ctx.ensure_app_dir()?;
+        let state = storage::load_state(&self.ctx)?;
         let mut config = storage::load_config(&self.ctx)?;
         if let Some(alert_at) = alert_at {
             if alert_at > 100 {
@@ -218,13 +249,59 @@ impl App {
         if let Some(mode) = mode {
             config.mode = mode;
         }
+        if let Some(priority) = priority {
+            config.priority = clean_priority(priority, &state)?;
+        }
         storage::save_config(&self.ctx, &config)?;
-        print_config(&config);
+        print_config(&config, &state);
         Ok(())
     }
 }
 
-fn print_config(config: &Config) {
+/// Validate a user supplied account order.
+///
+/// Names are accepted before the account they refer to is saved, because the
+/// order is easier to write once than to revisit after every `setup`. An unsaved
+/// name is reported and then ignored by routing until it exists.
+fn clean_priority(priority: Vec<String>, state: &State) -> Result<Vec<String>> {
+    let mut cleaned: Vec<String> = Vec::with_capacity(priority.len());
+    for value in priority {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let name = AccountName::parse(value)?;
+        if !state.accounts.contains_key(name.as_str()) {
+            eprintln!("warning: account is not saved yet: {name}");
+        }
+        if !cleaned.iter().any(|seen| seen == name.as_str()) {
+            cleaned.push(name.into_string());
+        }
+    }
+    Ok(cleaned)
+}
+
+fn describe_quota(snapshot: &RateLimitSnapshot, now: i64) -> String {
+    let usage = match snapshot.peak_usage() {
+        Some((label, pct)) => format!("{}({label})", display_pct(Some(pct))),
+        None => "-".to_string(),
+    };
+    match snapshot.blocking_reset(now) {
+        Some((label, reset)) => format!("{usage} reset in {}({label})", humanize(reset - now)),
+        None => usage,
+    }
+}
+
+fn print_config(config: &Config, state: &State) {
     println!("alert_at={}", config.alert_at);
     println!("mode={}", config.mode.as_str());
+    if config.priority.is_empty() {
+        println!("priority=(plan kind order: personal, team, enterprise, other)");
+    } else {
+        println!("priority={}", config.priority.join(","));
+    }
+    let order = routing::ordered_accounts(state, config);
+    if !order.is_empty() {
+        println!("order={}", order.join(" -> "));
+    }
 }
