@@ -4,7 +4,7 @@ use std::path::Path;
 
 pub(crate) fn shell_quote(path: &Path) -> String {
     let text = path.to_string_lossy();
-    format!("'{}'", text.replace('\'', r#"'\''"#))
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 pub(crate) fn escape_applescript(value: &str) -> String {
@@ -12,21 +12,19 @@ pub(crate) fn escape_applescript(value: &str) -> String {
 }
 
 pub(crate) fn display_pct(value: Option<u8>) -> String {
-    value
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "-".to_string())
+    value.map_or_else(|| "-".to_string(), |value| format!("{value}%"))
 }
 
 /// Render a duration in seconds as a short statusline friendly string.
 pub(crate) fn humanize(seconds: i64) -> String {
-    if seconds <= 0 {
+    // A reset in the past reads as elapsed rather than as a negative duration.
+    let Ok(seconds) = u64::try_from(seconds) else {
         return "0s".to_string();
-    }
+    };
     if seconds < 60 {
         return format!("{seconds}s");
     }
-    // div_ceil is stable for unsigned integers only, and seconds is positive here.
-    let minutes = (seconds as u64).div_ceil(60);
+    let minutes = seconds.div_ceil(60);
     if minutes < 60 {
         return format!("{minutes}m");
     }
@@ -41,7 +39,7 @@ mod tests {
     fn quotes_shell_paths() {
         assert_eq!(
             shell_quote(Path::new("/tmp/a b/account's/bin")),
-            "'/tmp/a b/account'\\''s/bin'"
+            r"'/tmp/a b/account'\''s/bin'"
         );
     }
 

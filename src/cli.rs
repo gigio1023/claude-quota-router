@@ -68,6 +68,11 @@ pub(crate) enum Commands {
 ///
 /// Keeping this as a single public entrypoint prevents the rest of the crate
 /// from exporting clap-specific details as public API.
+///
+/// # Errors
+///
+/// Returns the error of the selected command: an invalid argument, a missing
+/// account, a Keychain or filesystem failure, or an unreadable settings file.
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let app = App::new()?;

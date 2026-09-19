@@ -1,19 +1,17 @@
 //! Time helpers.
 //!
-//! The current implementation stores Unix timestamps because Claude Code
-//! statusline input uses epoch reset times. Keeping conversion here avoids
-//! sprinkling clock access through rendering and persistence code.
+//! Timestamps are Unix seconds as `i64`, matching the reset times Claude Code
+//! reports. Keeping one signed type across state, cache, and arithmetic removes
+//! the casts that a mixed signed and unsigned model needs.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) fn now_epoch() -> u64 {
+/// Seconds since the Unix epoch.
+///
+/// A clock set before 1970, or past year 292277026596, saturates rather than
+/// wrapping. Neither is a state this tool can act on.
+pub(crate) fn now_epoch() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-/// Same instant as [`now_epoch`], typed for arithmetic against reset times.
-pub(crate) fn now_epoch_i64() -> i64 {
-    now_epoch() as i64
+        .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
 }

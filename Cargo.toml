@@ -2,7 +2,10 @@
 name = "claude-quota-router"
 version = "0.1.0"
 edition = "2024"
+# let chains, which the routing and statusline code uses, are stable from 1.88.
+rust-version = "1.88"
 description = "Quota-aware Claude Code account router for macOS"
+repository = "https://github.com/gigio1023/claude-quota-router"
 license = "MIT"
 
 [dependencies]
@@ -11,3 +14,9 @@ clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order keeps the user's settings.json key order intact on install.
 serde_json = { version = "1.0", features = ["preserve_order"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

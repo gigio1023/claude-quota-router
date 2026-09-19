@@ -9,26 +9,24 @@ use crate::context::AppContext;
 use crate::domain::{
     AccountEntry, AccountKind, AccountName, Config, RateLimitSnapshot, RoutingMode, State,
 };
-use crate::keychain::Keychain;
+use crate::keychain;
 use crate::routing;
 use crate::settings;
 use crate::statusline;
 use crate::storage;
 use crate::switcher::{self, SwitchOptions};
-use crate::time::{now_epoch, now_epoch_i64};
+use crate::time::now_epoch;
 use crate::util::{display_pct, humanize};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub(crate) struct App {
     ctx: AppContext,
-    keychain: Keychain,
 }
 
 impl App {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             ctx: AppContext::new()?,
-            keychain: Keychain,
         })
     }
 
@@ -48,7 +46,7 @@ impl App {
             } => self.config(alert_at, mode, priority),
             Commands::Install => settings::install_statusline(&self.ctx),
             Commands::Uninstall => settings::uninstall_statusline(&self.ctx),
-            Commands::Statusline => statusline::handle(&self.ctx, &self.keychain),
+            Commands::Statusline => statusline::handle(&self.ctx),
         }
     }
 
@@ -58,15 +56,16 @@ impl App {
     /// told apart by the thing that actually differs between them.
     fn setup(&self, name: Option<String>, kind: Option<AccountKind>) -> Result<()> {
         let status = claude::auth_status();
-        let name = match name {
-            Some(value) => AccountName::parse(&value)?,
-            None => {
-                let email = status.as_ref().and_then(|status| status.email.as_deref());
-                let email = email.ok_or_else(|| {
+        let name = if let Some(value) = name {
+            AccountName::parse(&value)?
+        } else {
+            let email = status
+                .as_ref()
+                .and_then(|status| status.email.as_deref())
+                .ok_or_else(|| {
                     anyhow!("claude auth status reported no email; pass an account name")
                 })?;
-                AccountName::parse(email)?
-            }
+            AccountName::parse(email)?
         };
         self.ctx.ensure_app_dir()?;
 
@@ -76,11 +75,9 @@ impl App {
         // need to parse Keychain metadata unless the state file is missing.
         let active_account = match &state.active_account {
             Some(account) => account.clone(),
-            None => self.keychain.detect_active_account()?,
+            None => keychain::detect_active_account()?,
         };
-        let credential = self
-            .keychain
-            .read_active(&active_account)
+        let credential = keychain::read_active(&active_account)
             .context("failed to read active Claude Code credential from Keychain")?;
         // Prefer an explicit CLI override for import and migration cases,
         // then what Claude Code reports, then the credential JSON shape.
@@ -89,16 +86,14 @@ impl App {
             .or_else(|| claude::detect_account_kind_from_credential(&credential))
             .unwrap_or(AccountKind::Other);
 
-        self.keychain
-            .upsert_account(&name, &credential)
+        keychain::upsert_account(&name, &credential)
             .with_context(|| format!("failed to save account credential for {name}"))?;
 
         let now = now_epoch();
         let created_at = state
             .accounts
             .get(name.as_str())
-            .map(|entry| entry.created_at)
-            .unwrap_or(now);
+            .map_or(now, |entry| entry.created_at);
         state.active_account = Some(active_account);
         state.current_account = Some(name.to_string());
         state.accounts.insert(
@@ -119,7 +114,6 @@ impl App {
         let name = AccountName::parse(name)?;
         switcher::switch_to(
             &self.ctx,
-            &self.keychain,
             &name,
             SwitchOptions { yes, emit: true },
         )
@@ -147,7 +141,7 @@ impl App {
 
         let config = storage::load_config(&self.ctx)?;
         let cache = storage::load_rate_limits(&self.ctx)?;
-        let now = now_epoch_i64();
+        let now = now_epoch();
 
         for (index, name) in routing::ordered_accounts(&state, &config)
             .into_iter()
@@ -161,13 +155,11 @@ impl App {
             let kind = state
                 .accounts
                 .get(&name)
-                .map(|entry| entry.kind.as_str())
-                .unwrap_or("other");
+                .map_or("other", |entry| entry.kind.as_str());
             let quota = cache
                 .accounts
                 .get(&name)
-                .map(|snapshot| describe_quota(snapshot, now))
-                .unwrap_or_else(|| "-".to_string());
+                .map_or_else(|| "-".to_string(), |snapshot| describe_quota(snapshot, now));
             println!("{marker} {}. {name}\t{kind}\t{quota}", index + 1);
         }
         Ok(())
@@ -182,7 +174,7 @@ impl App {
         if state.accounts.remove(name.as_str()).is_none() {
             bail!("account is not saved: {name}");
         }
-        self.keychain.delete_account(&name).ok();
+        keychain::delete_account(&name).ok();
         if state.previous_account.as_deref() == Some(name.as_str()) {
             state.previous_account = None;
         }
@@ -204,7 +196,7 @@ impl App {
         }
 
         if let Some(detected) =
-            switcher::detect_current_account_by_credential(&self.keychain, &mut state)?
+            switcher::detect_current_account_by_credential(&mut state)?
         {
             storage::save_state(&self.ctx, &state)?;
             println!("{detected}");
@@ -219,7 +211,7 @@ impl App {
         let state = storage::load_state(&self.ctx)?;
         let config = storage::load_config(&self.ctx)?;
         let cache = storage::load_rate_limits(&self.ctx)?;
-        let now = now_epoch_i64();
+        let now = now_epoch();
 
         println!(
             "current: {}",

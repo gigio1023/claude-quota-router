@@ -85,7 +85,7 @@ impl AccountKind {
         }
     }
 
-    pub(crate) fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Personal => "personal",
             Self::Team => "team",
@@ -95,7 +95,7 @@ impl AccountKind {
     }
 
     /// Default routing rank used when the priority list does not name the account.
-    pub(crate) fn rank(self) -> u8 {
+    pub(crate) const fn rank(self) -> u8 {
         match self {
             Self::Personal => 0,
             Self::Team => 1,
@@ -113,7 +113,7 @@ pub(crate) enum RoutingMode {
 }
 
 impl RoutingMode {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",
             Self::Auto => "auto",
@@ -145,8 +145,8 @@ impl Default for Config {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AccountEntry {
     pub(crate) kind: AccountKind,
-    pub(crate) created_at: u64,
-    pub(crate) updated_at: u64,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -161,7 +161,7 @@ pub(crate) struct State {
     /// started with, so quota readings taken right after a switch would be filed
     /// under the wrong account without this timestamp.
     #[serde(default)]
-    pub(crate) switched_at: Option<u64>,
+    pub(crate) switched_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -176,13 +176,13 @@ impl LimitWindow {
     }
 
     /// The window still blocks work: it is full and has not reset yet.
-    fn blocks(&self, now: i64, detected_at: u64) -> bool {
+    fn blocks(&self, now: i64, detected_at: i64) -> bool {
         if !self.is_full() {
             return false;
         }
         match self.resets_at {
             Some(reset) => reset > now,
-            None => now.saturating_sub(detected_at as i64) < UNKNOWN_RESET_GRACE,
+            None => now.saturating_sub(detected_at) < UNKNOWN_RESET_GRACE,
         }
     }
 
@@ -194,7 +194,7 @@ impl LimitWindow {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct RateLimitSnapshot {
-    pub(crate) detected_at: u64,
+    pub(crate) detected_at: i64,
     #[serde(default)]
     pub(crate) five_hour: LimitWindow,
     #[serde(default)]

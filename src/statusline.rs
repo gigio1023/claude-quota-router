@@ -6,12 +6,11 @@
 
 use crate::context::AppContext;
 use crate::domain::{AccountName, Config, LimitWindow, RateLimitSnapshot, RoutingMode, State};
-use crate::keychain::Keychain;
 use crate::notification;
 use crate::routing;
 use crate::storage;
 use crate::switcher::{self, SwitchOptions};
-use crate::time::{now_epoch, now_epoch_i64};
+use crate::time::now_epoch;
 use crate::util::humanize;
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -29,7 +28,7 @@ const APP_TITLE: &str = "claude-quota-router";
 /// router straight back out of the account it just entered.
 const SWITCH_GRACE: i64 = 90;
 
-pub(crate) fn handle(ctx: &AppContext, keychain: &Keychain) -> Result<()> {
+pub(crate) fn handle(ctx: &AppContext) -> Result<()> {
     let input = read_stdin_to_string()?;
     if input.trim().is_empty() {
         return Ok(());
@@ -45,7 +44,7 @@ pub(crate) fn handle(ctx: &AppContext, keychain: &Keychain) -> Result<()> {
     let config = storage::load_config(ctx)?;
     // A broken state file or a failed Keychain read must not blank the whole
     // statusline, which would take the user's own command down with it.
-    let router_output = render_router_output(ctx, keychain, &state, &config, &parsed).unwrap_or(None);
+    let router_output = render_router_output(ctx, &state, &config, &parsed).unwrap_or(None);
 
     match (router_output.as_deref(), inner_output.as_deref()) {
         (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => println!("{a} | {b}"),
@@ -59,7 +58,6 @@ pub(crate) fn handle(ctx: &AppContext, keychain: &Keychain) -> Result<()> {
 
 fn render_router_output(
     ctx: &AppContext,
-    keychain: &Keychain,
     state: &State,
     config: &Config,
     input: &Value,
@@ -71,7 +69,7 @@ fn render_router_output(
         return Ok(None);
     }
 
-    let now = now_epoch_i64();
+    let now = now_epoch();
     let settling = is_settling(state, now);
     let mut cache = storage::load_rate_limits(ctx)?;
 
@@ -85,7 +83,7 @@ fn render_router_output(
 
     let mut routing_failed = false;
     if !settling && config.mode == RoutingMode::Auto {
-        match auto_route(ctx, keychain, state, config, &cache, current, now) {
+        match auto_route(ctx, state, config, &cache, current, now) {
             Ok(Some(message)) => return Ok(Some(message)),
             Ok(None) => {}
             // A switch can fail on a missing or locked Keychain entry. Say so in
@@ -108,7 +106,6 @@ fn render_router_output(
 /// Move off an account that is at its limit, or back to one that has reset.
 fn auto_route(
     ctx: &AppContext,
-    keychain: &Keychain,
     state: &State,
     config: &Config,
     cache: &crate::domain::RateLimitCache,
@@ -116,25 +113,20 @@ fn auto_route(
     now: i64,
 ) -> Result<Option<String>> {
     if let Some(target) = routing::return_target(state, config, cache, current, now) {
-        return switch_and_report(ctx, keychain, &target);
+        return switch_and_report(ctx, &target);
     }
     if is_blocked(cache, current, now)
         && let Some(target) = routing::next_target(state, config, cache, current, now)
     {
-        return switch_and_report(ctx, keychain, &target);
+        return switch_and_report(ctx, &target);
     }
     Ok(None)
 }
 
-fn switch_and_report(
-    ctx: &AppContext,
-    keychain: &Keychain,
-    target: &str,
-) -> Result<Option<String>> {
+fn switch_and_report(ctx: &AppContext, target: &str) -> Result<Option<String>> {
     let name = AccountName::parse(target)?;
     switcher::switch_to(
         ctx,
-        keychain,
         &name,
         SwitchOptions {
             yes: true,
@@ -215,7 +207,7 @@ fn notify_reset_soon(ctx: &AppContext, account: &str, remaining: i64) {
             &format!("{account} quota resets within 1 minute."),
         );
     } else if remaining <= 300 {
-        let minutes = (remaining as u64).div_ceil(60);
+        let minutes = u64::try_from(remaining).unwrap_or(0).div_ceil(60);
         notify(
             ctx,
             &format!("reset-5min:{account}"),
@@ -227,7 +219,7 @@ fn notify_reset_soon(ctx: &AppContext, account: &str, remaining: i64) {
 fn is_settling(state: &State, now: i64) -> bool {
     state
         .switched_at
-        .is_some_and(|at| now.saturating_sub(at as i64) < SWITCH_GRACE)
+        .is_some_and(|at| now.saturating_sub(at) < SWITCH_GRACE)
 }
 
 fn is_blocked(cache: &crate::domain::RateLimitCache, account: &str, now: i64) -> bool {
