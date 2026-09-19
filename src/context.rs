@@ -10,6 +10,9 @@ use std::path::PathBuf;
 
 const APP_HOME_ENV: &str = "CLAUDE_QUOTA_ROUTER_HOME";
 const CLAUDE_HOME_ENV: &str = "CLAUDE_HOME";
+/// Claude Code's own override for its config directory. Honoring it keeps
+/// `install` from writing a `settings.json` that Claude Code never reads.
+const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppContext {
@@ -25,10 +28,11 @@ impl AppContext {
             home_dir()?.join(".config").join("claude-quota-router")
         };
 
-        let claude_dir = if let Some(path) = env::var_os(CLAUDE_HOME_ENV) {
-            PathBuf::from(path)
-        } else {
-            home_dir()?.join(".claude")
+        let claude_dir = match env::var_os(CLAUDE_HOME_ENV)
+            .or_else(|| env::var_os(CLAUDE_CONFIG_DIR_ENV))
+        {
+            Some(path) => PathBuf::from(path),
+            None => home_dir()?.join(".claude"),
         };
 
         Ok(Self {

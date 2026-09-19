@@ -119,6 +119,7 @@ Two rules keep auto mode from acting on stale readings. Only the account Claude 
 | Account metadata | `~/.config/claude-quota-router/state.json` |
 | Alert, mode, and account order | `~/.config/claude-quota-router/config.json` |
 | Quota cache, one entry per account | `~/.config/claude-quota-router/rate-limits.json` |
+| Claude Code settings the wrapper edits | `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` |
 
 Switching replaces the Keychain credential only. The `oauthAccount` block in `~/.claude.json` still describes the previous account until Claude Code refetches the profile.
 
