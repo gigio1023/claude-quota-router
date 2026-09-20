@@ -1,98 +1,147 @@
 # Claude Quota Router
 
-Claude Quota Router switches saved Claude Code accounts on macOS and shows quota timing in the statusline.
+Claude Quota Router keeps Claude Code on an account that still has quota. It reads the quota Claude Code hands to the statusline, remembers what each saved account had left when you were last on it, and moves the active credential down an order you set. Personal, team, and enterprise plans are all routed the same way.
 
-## Scenario
-
-Use it when one team account is near quota and any saved enterprise account should run until that team account resets.
-
-```text
-team-main account
-  -> quota alert in statusline
-  -> switch to enterprise-main
-  -> team-main reset countdown
-  -> switch back to team-main
-```
+![The statusline command receives rate_limits from Claude Code, files one reading per account into rate-limits.json, takes the account order from config.json, and replaces the active credential with a saved one when the current account reaches its limit.](docs/figures/switch-loop.svg)
 
 ## Install
 
-Build the binary and place it on `PATH`.
+Building needs Rust 1.88 or newer. On macOS and Linux:
 
 ```bash
-cargo build --release
-cp target/release/claude-quota-router ~/.local/bin/
+./install.sh
 ```
 
-## Setup
-
-Save each Claude Code login once. Use any lowercase account name.
-
-1. Log in with a team account.
+The script builds the binary, copies it to `~/.local/bin`, and adds that directory to `PATH` in the file your login shell reads. It leaves the profile alone when the directory is already there. Open a new shell, then confirm:
 
 ```bash
-claude-quota-router setup team-main --kind team
-claude-quota-router setup team-side --kind team
+claude-quota-router --version
 ```
 
-2. Log out, log in with an enterprise account, then save it.
+[docs/install.md](docs/install.md) covers the options, a build by hand, and Windows.
 
-```bash
-claude-quota-router setup enterprise-main --kind enterprise
-claude-quota-router setup enterprise-backup --kind enterprise
-```
+## Set up your accounts
 
-3. Install the statusline wrapper.
+Run `setup` once per account, each time while Claude Code is signed in to that account. The name defaults to the email, because that is what tells two logins apart.
 
-```bash
-claude-quota-router install
-```
+1. Save the account you are signed in to now.
 
-4. Set the alert threshold.
+   ```bash
+   claude auth status          # check which account this is
+   claude-quota-router setup
+   ```
 
-```bash
-claude-quota-router config --alert-at 95 --mode manual
-```
+2. Sign in to the next account and save that one too. Repeat for every account you want in the rotation.
 
-## Daily Use
+   ```bash
+   claude auth logout
+   claude auth login
+   claude-quota-router setup
+   ```
 
-Switch accounts from a shell or from Claude Code with `!`.
+3. Put the accounts in the order you want them used.
 
-```bash
-claude-quota-router switch enterprise-main --yes
-claude-quota-router switch team-side --yes
-claude-quota-router toggle --yes
-claude-quota-router list
-claude-quota-router status
-```
+   ```bash
+   claude-quota-router config --priority me@work.com,me@gmail.com
+   ```
 
-## Auto Mode
+   An account left out of the list falls in behind it by plan kind, in the order personal, team, enterprise, other.
 
-Auto mode uses account kind, not account name.
+4. Hook up the statusline, then restart Claude Code.
+
+   ```bash
+   claude-quota-router install
+   ```
+
+   This wraps the statusline command you already have rather than replacing it. Your command keeps running on every render and its output is printed after the router's own. Only `command` on the `statusLine` object changes, so keys such as `padding` survive, and `settings.json` is copied to `settings.json.bak-<timestamp>` first.
+
+5. Check the result.
+
+   ```bash
+   claude-quota-router list
+   ```
+
+   ```
+   * 1. me@work.com     team        42%(5h)
+     2. me@gmail.com    personal    -
+   ```
+
+   The star marks the account in use, the number is its place in the order, and the last column is the most recent quota reading for that account. A dash means nothing has been read yet, which is normal until you have spent a session on it.
+
+## Everyday use
+
+| Command | What it does |
+|---|---|
+| `claude-quota-router list` | Saved accounts in routing order, with their last quota reading |
+| `claude-quota-router status` | Current account, settings, and the whole quota cache |
+| `claude-quota-router current` | The current account name only |
+| `claude-quota-router switch <name>` | Move to a saved account, asking first |
+| `claude-quota-router toggle` | Move back to the account you came from |
+| `claude-quota-router setup <name>` | Save again under a name you choose instead of the email |
+| `claude-quota-router remove <name>` | Forget a saved account and delete its stored credential |
+
+Add `--yes` to `switch` and `toggle` to skip the prompt. Restart Claude Code after a switch: a running session keeps using the credential it started with.
+
+## What the statusline shows
+
+The router prints its own part first and your old command's output after it, separated by `|`.
+
+| Segment | Meaning |
+|---|---|
+| `me@work.com` | The account in use |
+| `97%(5h)` | Usage has passed the alert threshold, in the five hour window |
+| `LIMIT(7d)` | That window is full |
+| `me@gmail.com reset in 2h10m(5h)` | A higher ranked account is waiting on a reset |
+| `me@gmail.com reset done` | That account is usable again |
+| `route failed` | An automatic switch could not complete |
+| `-> claude-quota-router list` | Something needs your attention |
+
+`claude-quota-router config --alert-at 90` moves the threshold, which is 95 by default.
+
+## Automatic switching
 
 ```bash
 claude-quota-router config --mode auto
 ```
 
-| State | Action |
-|---|---|
-| current `team` account reaches 100% | switch to first `enterprise` account by name |
-| cached reset time passes | switch back to the source `team` account |
+In `auto` the statusline switches on its own: off an account that has hit its limit, onto the next usable one in the order, and back up to a higher ranked account once its reset has passed. It never pulls you back to an account below the one you moved to by hand. The default is `manual`, which only prints.
 
-## Storage
+Readings are ignored for 90 seconds after any switch. The statusline payload carries no account identity, so a reading arriving right after a switch still belongs to the account you left.
 
-| Data | Location |
-|---|---|
-| Saved account credentials | macOS Keychain service `claude-quota-router` |
-| Active Claude Code credential | macOS Keychain service `Claude Code-credentials` |
-| Account metadata | `~/.config/claude-quota-router/state.json` |
-| Quota cache | `~/.config/claude-quota-router/rate-limits.json` |
-
-## Verify
-
-Run the checks before publishing a change.
+## Removing it
 
 ```bash
-cargo test
-cargo clippy -- -D warnings
-cargo build --release
+./uninstall.sh --purge
 ```
+
+This restores your old statusline command, deletes the saved credentials and this tool's directory, removes the binary, and takes out the `PATH` line the installer added. That line is matched by its marker comment, so a `PATH` line you wrote by hand survives.
+
+| Command | Removes |
+|---|---|
+| `./uninstall.sh --purge` | Everything, including the binary and the `PATH` line |
+| `./uninstall.sh` | The same, but keeps the saved accounts for later |
+| `claude-quota-router uninstall --purge` | Saved credentials and state, keeping the binary on `PATH` |
+| `claude-quota-router uninstall` | The statusline wrapper only |
+
+A purge asks before it deletes; `--yes` answers for it. None of these touch the account Claude Code is signed in to, so removing the router logs you out of nothing.
+
+## Good to know
+
+- **Restart Claude Code after a switch.** A running session holds the credential it started with. The statusline says so when it switches for you.
+- **The account Claude Code displays lags behind.** A switch replaces the active credential and nothing else. The `oauthAccount` block in `~/.claude.json` keeps the previous email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account regardless, because the OAuth token decides that.
+- **That lag reaches `claude auth status`,** which is where `setup` gets its default name. Running `setup` right after a switch would file the new credential under the previous account's name, so it refuses when the active credential is already saved under another name. Sign in properly with `claude auth login`, or pass the name yourself.
+- **Saved credentials are real credentials.** On macOS they are Keychain items under the service `claude-quota-router`; elsewhere they are owner-only files. They carry a live refresh token, so treat them the way you treat the login itself.
+- **A broken state file costs you the router, not your statusline.** If this tool's own files cannot be read, it prints nothing and your original command still renders.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/routing.md](docs/routing.md) | How the order and the cached readings pick an account, and what the statusline prints |
+| [docs/platforms.md](docs/platforms.md) | Credential stores, notifications, and file locations per platform |
+| [docs/install.md](docs/install.md) | Install options, a build by hand, the statusline wrapper, and removal |
+| [docs/development.md](docs/development.md) | Module layout, checks, and adding a platform backend |
+
+## License
+
+MIT. See [LICENSE](LICENSE).

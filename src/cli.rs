@@ -20,9 +20,9 @@ struct Cli {
 pub(crate) enum Commands {
     /// Save the active Claude Code credential as a named account.
     Setup {
-        /// Account name, for example team, enterprise, team-2, or backup.
-        name: String,
-        /// Override the account kind. If omitted, claude auth status is used.
+        /// Account name. Defaults to the email claude auth status reports.
+        name: Option<String>,
+        /// Override the plan kind. If omitted, claude auth status is used.
         #[arg(long, value_enum)]
         kind: Option<AccountKind>,
     },
@@ -45,17 +45,28 @@ pub(crate) enum Commands {
     Current,
     /// Show state, config, and cached quota information.
     Status,
-    /// Read or update statusline alert settings.
+    /// Read or update alert, routing, and account order settings.
     Config {
         #[arg(long)]
         alert_at: Option<u8>,
         #[arg(long, value_enum)]
         mode: Option<RoutingMode>,
+        /// Account order, for example personal-main,team-main,enterprise-main.
+        /// Pass an empty value to clear it.
+        #[arg(long, value_delimiter = ',')]
+        priority: Option<Vec<String>>,
     },
     /// Install the Claude Code statusLine wrapper.
     Install,
     /// Remove the Claude Code statusLine wrapper and restore the prior command.
-    Uninstall,
+    Uninstall {
+        /// Also delete every saved account credential and the router's own
+        /// directory, leaving only the binary behind.
+        #[arg(long)]
+        purge: bool,
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Internal command used by Claude Code statusLine.
     Statusline,
 }
@@ -64,6 +75,11 @@ pub(crate) enum Commands {
 ///
 /// Keeping this as a single public entrypoint prevents the rest of the crate
 /// from exporting clap-specific details as public API.
+///
+/// # Errors
+///
+/// Returns the error of the selected command: an invalid argument, a missing
+/// account, a Keychain or filesystem failure, or an unreadable settings file.
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let app = App::new()?;

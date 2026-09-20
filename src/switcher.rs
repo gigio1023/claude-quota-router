@@ -5,13 +5,13 @@
 //! activate the target credential, update state, then reset quota side effects.
 
 use crate::context::AppContext;
-use crate::domain::{AccountKind, AccountName, RouteLock, State};
-use crate::keychain::Keychain;
+use crate::credentials;
+use crate::domain::{AccountName, State};
 use crate::notification;
 use crate::storage;
 use crate::time::now_epoch;
-use anyhow::{Context, Result, anyhow, bail};
-use std::io::{self, IsTerminal, Write};
+use crate::util::confirm;
+use anyhow::{Context, Result, bail};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SwitchOptions {
@@ -21,38 +21,23 @@ pub(crate) struct SwitchOptions {
 
 pub(crate) fn switch_to(
     ctx: &AppContext,
-    keychain: &Keychain,
     name: &AccountName,
     options: SwitchOptions,
 ) -> Result<()> {
     let mut state = storage::load_state(ctx)?;
-    let target_entry = state
-        .accounts
-        .get(name.as_str())
-        .cloned()
-        .ok_or_else(|| anyhow!("account is not saved: {name}"))?;
-    confirm_switch(name, options.yes)?;
+    if !state.accounts.contains_key(name.as_str()) {
+        bail!("account is not saved: {name}");
+    }
+    confirm(&format!("switch to {name}?"), options.yes)?;
 
-    let active_account = match &state.active_account {
-        Some(account) => account.clone(),
-        None => keychain.detect_active_account()?,
-    };
+    let active_credential = credentials::read_active(ctx).unwrap_or_default();
+    refresh_current_backup(ctx, &state, name, &active_credential)?;
 
-    refresh_current_backup(ctx, keychain, &state, name, &active_account)?;
-
-    let target_credential = keychain
-        .read_account(name)
+    let target_credential = credentials::read_saved(ctx, name)
         .with_context(|| format!("failed to read saved credential for {name}"))?;
-    let active_credential = keychain.read_active(&active_account).unwrap_or_default();
     let old_current = state.current_account.clone();
-    let route_lock =
-        route_lock_for_transition(&state, old_current.as_deref(), name, target_entry.kind);
 
     if active_credential == target_credential {
-        if let Some(lock) = &route_lock {
-            storage::save_route_lock(ctx, lock)?;
-        }
-        state.active_account = Some(active_account);
         state.current_account = Some(name.to_string());
         storage::save_state(ctx, &state)?;
         if options.emit {
@@ -61,27 +46,17 @@ pub(crate) fn switch_to(
         return Ok(());
     }
 
-    if let Some(lock) = &route_lock {
-        storage::save_route_lock(ctx, lock)?;
-    }
-    if let Err(error) = keychain
-        .upsert_active(&active_account, &target_credential)
-        .with_context(|| format!("failed to activate account {name}"))
-    {
-        if route_lock.is_some() {
-            storage::remove_route_lock(ctx).ok();
-        }
-        return Err(error);
-    }
+    credentials::write_active(ctx, &target_credential)
+        .with_context(|| format!("failed to activate account {name}"))?;
 
     if old_current.as_deref() != Some(name.as_str()) {
         state.previous_account = old_current;
     }
-    state.active_account = Some(active_account);
     state.current_account = Some(name.to_string());
+    state.switched_at = Some(now_epoch());
     storage::save_state(ctx, &state)?;
 
-    reset_quota_side_effects(ctx, target_entry.kind);
+    clear_quota_side_effects(ctx, name)?;
 
     if options.emit {
         println!("switched to account: {name}");
@@ -91,22 +66,32 @@ pub(crate) fn switch_to(
 }
 
 pub(crate) fn detect_current_account_by_credential(
-    keychain: &Keychain,
+    ctx: &AppContext,
     state: &mut State,
 ) -> Result<Option<String>> {
-    let account = match &state.active_account {
-        Some(account) => account.clone(),
-        None => keychain.detect_active_account()?,
-    };
-    let active = keychain.read_active(&account)?;
+    let active = credentials::read_active(ctx)?;
+    let found = saved_account_for_credential(ctx, state, &active)?;
+    if let Some(name) = found.as_ref() {
+        state.current_account = Some(name.clone());
+    }
+    Ok(found)
+}
+
+/// The saved account holding exactly this credential, if one does.
+///
+/// Credentials are compared rather than trusted from a name, because the only
+/// thing that reliably identifies a login here is the token itself.
+pub(crate) fn saved_account_for_credential(
+    ctx: &AppContext,
+    state: &State,
+    credential: &str,
+) -> Result<Option<String>> {
     for name in state.accounts.keys() {
         let account_name = AccountName::parse(name)?;
-        if let Ok(saved) = keychain.read_account(&account_name)
-            && saved == active
+        if let Ok(saved) = credentials::read_saved(ctx, &account_name)
+            && saved == credential
         {
-            state.active_account = Some(account);
-            state.current_account = Some(name.to_string());
-            return Ok(Some(name.to_string()));
+            return Ok(Some(name.clone()));
         }
     }
     Ok(None)
@@ -118,156 +103,34 @@ pub(crate) fn detect_current_account_by_credential(
 /// current credential immediately before switching prevents restoring an older
 /// token the next time the user switches back to this account.
 fn refresh_current_backup(
-    _ctx: &AppContext,
-    keychain: &Keychain,
+    ctx: &AppContext,
     state: &State,
     target: &AccountName,
-    active_account: &str,
+    active_credential: &str,
 ) -> Result<()> {
     if let Some(current_account) = state.current_account.as_deref()
         && current_account != target.as_str()
         && state.accounts.contains_key(current_account)
-        && let Ok(current_credential) = keychain.read_active(active_account)
+        && !active_credential.is_empty()
     {
         let current_name = AccountName::parse(current_account)?;
-        keychain
-            .upsert_account(&current_name, &current_credential)
-            .with_context(|| {
-                format!("failed to update current account backup for {current_account}")
-            })?;
+        credentials::write_saved(ctx, &current_name, active_credential).with_context(|| {
+            format!("failed to update current account backup for {current_account}")
+        })?;
     }
     Ok(())
 }
 
-/// Reset local quota markers according to the target account kind.
+/// Drop the quota state that the switch invalidates.
 ///
-/// Team accounts start a fresh quota observation cycle, so the cached rate limit
-/// snapshot is removed. Enterprise accounts keep the snapshot because their
-/// statusline countdown depends on the team reset timestamp captured earlier.
-fn reset_quota_side_effects(ctx: &AppContext, target_kind: AccountKind) {
-    match target_kind {
-        AccountKind::Enterprise => {
-            notification::clear_notified(ctx).ok();
-        }
-        AccountKind::Team => {
-            storage::remove_route_lock(ctx).ok();
-            std::fs::remove_file(ctx.rate_limits_path()).ok();
-            notification::clear_notified(ctx).ok();
-        }
-        AccountKind::Other => {
-            storage::remove_route_lock(ctx).ok();
-            notification::clear_notified(ctx).ok();
-        }
+/// The target's cached reading describes the moment the router left it, so it is
+/// discarded and re-observed. Readings for every other account are kept: they are
+/// what the statusline counts down and what selection skips over. Notification
+/// markers are cleared so the next quota event is announced again.
+fn clear_quota_side_effects(ctx: &AppContext, target: &AccountName) -> Result<()> {
+    let mut cache = storage::load_rate_limits(ctx)?;
+    if cache.accounts.remove(target.as_str()).is_some() {
+        storage::save_rate_limits(ctx, &cache)?;
     }
-}
-
-fn route_lock_for_transition(
-    state: &State,
-    current_account: Option<&str>,
-    target: &AccountName,
-    target_kind: AccountKind,
-) -> Option<RouteLock> {
-    let source = current_account?;
-    if source == target.as_str() || target_kind != AccountKind::Enterprise {
-        return None;
-    }
-    if state.accounts.get(source).map(|entry| entry.kind) != Some(AccountKind::Team) {
-        return None;
-    }
-    Some(RouteLock {
-        source_account: source.to_string(),
-        routed_account: target.to_string(),
-        created_at: now_epoch(),
-    })
-}
-
-/// Require an explicit acknowledgement before touching the active credential.
-///
-/// Statusline auto-switch and Claude Code bang commands use `--yes`; interactive
-/// shell use gets a prompt so a typo does not silently replace the Keychain
-/// credential read by every running Claude Code session.
-fn confirm_switch(name: &AccountName, yes: bool) -> Result<()> {
-    if yes {
-        return Ok(());
-    }
-    if !io::stdin().is_terminal() {
-        bail!("refusing to switch without confirmation in non-interactive input; pass --yes");
-    }
-
-    eprint!("switch to {name}? [y/N] ");
-    io::stderr().flush().ok();
-    let mut answer = String::new();
-    io::stdin()
-        .read_line(&mut answer)
-        .context("failed to read confirmation")?;
-    match answer.trim() {
-        "y" | "Y" | "yes" | "YES" => Ok(()),
-        _ => bail!("cancelled"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::AccountEntry;
-    use std::collections::BTreeMap;
-
-    fn state_with(accounts: &[(&str, AccountKind)]) -> State {
-        let mut entries = BTreeMap::new();
-        for (name, kind) in accounts {
-            entries.insert(
-                (*name).to_string(),
-                AccountEntry {
-                    kind: *kind,
-                    created_at: 1,
-                    updated_at: 1,
-                },
-            );
-        }
-        State {
-            active_account: Some("active".to_string()),
-            current_account: Some("team-main".to_string()),
-            previous_account: None,
-            accounts: entries,
-        }
-    }
-
-    #[test]
-    fn records_source_team_when_routing_to_enterprise() {
-        let state = state_with(&[
-            ("enterprise-main", AccountKind::Enterprise),
-            ("team-main", AccountKind::Team),
-        ]);
-        let target = AccountName::parse("enterprise-main").unwrap();
-        let lock = route_lock_for_transition(
-            &state,
-            state.current_account.as_deref(),
-            &target,
-            AccountKind::Enterprise,
-        )
-        .unwrap();
-
-        assert_eq!(lock.source_account, "team-main");
-        assert_eq!(lock.routed_account, "enterprise-main");
-    }
-
-    #[test]
-    fn does_not_record_lock_for_team_target() {
-        let state = state_with(&[
-            ("enterprise-main", AccountKind::Enterprise),
-            ("team-main", AccountKind::Team),
-            ("team-side", AccountKind::Team),
-        ]);
-        let target = AccountName::parse("team-side").unwrap();
-
-        assert!(
-            route_lock_for_transition(
-                &state,
-                state.current_account.as_deref(),
-                &target,
-                AccountKind::Team,
-            )
-            .is_none()
-        );
-    }
+    notification::clear_notified(ctx)
 }
