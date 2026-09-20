@@ -16,8 +16,9 @@ use crate::statusline;
 use crate::storage;
 use crate::switcher::{self, SwitchOptions};
 use crate::time::now_epoch;
-use crate::util::{display_pct, humanize};
+use crate::util::{confirm, display_pct, humanize};
 use anyhow::{Context, Result, anyhow, bail};
+use std::fs;
 
 pub(crate) struct App {
     ctx: AppContext,
@@ -45,7 +46,7 @@ impl App {
                 priority,
             } => self.config(alert_at, mode, priority),
             Commands::Install => settings::install_statusline(&self.ctx),
-            Commands::Uninstall => settings::uninstall_statusline(&self.ctx),
+            Commands::Uninstall { purge, yes } => self.uninstall(purge, yes),
             Commands::Statusline => statusline::handle(&self.ctx),
         }
     }
@@ -78,6 +79,19 @@ impl App {
             .or_else(|| status.as_ref().and_then(|status| status.kind))
             .or_else(|| claude::detect_account_kind_from_credential(&credential))
             .unwrap_or(AccountKind::Other);
+
+        // `claude auth status` answers from a profile Claude Code caches between
+        // refreshes, so shortly after a switch it can still name the account the
+        // router just left. Saving then would file this credential under the
+        // wrong login and make a later switch hand back the wrong token.
+        if let Some(existing) = switcher::saved_account_for_credential(&self.ctx, &state, &credential)?
+            && existing != name.as_str()
+        {
+            bail!(
+                "the active credential is already saved as {existing}, but this would save it as \
+                 {name}; log in as the account you mean, or run `remove {existing}` first"
+            );
+        }
 
         credentials::write_saved(&self.ctx, &name, &credential)
             .with_context(|| format!("failed to save account credential for {name}"))?;
@@ -225,6 +239,47 @@ impl App {
         for (name, snapshot) in &cache.accounts {
             println!("  {name}\t{}", describe_quota(snapshot, now));
         }
+        Ok(())
+    }
+
+    /// Undo the statusline install, and on request every trace the tool keeps.
+    ///
+    /// A purge is the counterpart of `setup`: it removes the saved credentials
+    /// and the state directory, which is everything this tool owns apart from
+    /// the binary and the `PATH` line `install.sh` wrote. The credential Claude
+    /// Code is logged in with is never touched.
+    fn uninstall(&self, purge: bool, yes: bool) -> Result<()> {
+        settings::uninstall_statusline(&self.ctx)?;
+        if !purge {
+            return Ok(());
+        }
+
+        let state = storage::load_state(&self.ctx)?;
+        confirm(
+            &format!(
+                "delete {} saved credential(s) and {}?",
+                state.accounts.len(),
+                self.ctx.app_dir.display()
+            ),
+            yes,
+        )?;
+
+        for name in state.accounts.keys() {
+            let name = AccountName::parse(name)?;
+            let removed = credentials::delete_saved(&self.ctx, &name)
+                .with_context(|| format!("failed to remove the saved credential for {name}"))?;
+            if removed {
+                println!("removed saved credential: {name}");
+            } else {
+                println!("no stored credential found for {name}");
+            }
+        }
+        if self.ctx.app_dir.exists() {
+            fs::remove_dir_all(&self.ctx.app_dir)
+                .with_context(|| format!("failed to remove {}", self.ctx.app_dir.display()))?;
+            println!("removed {}", self.ctx.app_dir.display());
+        }
+        println!("the Claude Code login is unchanged; only the router's copies are gone");
         Ok(())
     }
 

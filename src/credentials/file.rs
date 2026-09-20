@@ -52,11 +52,12 @@ pub(crate) fn write_saved(ctx: &AppContext, name: &AccountName, credential: &str
     write_private(&account_path(ctx, name), credential)
 }
 
-pub(crate) fn delete_saved(ctx: &AppContext, name: &AccountName) -> Result<()> {
+/// Remove a saved account credential, reporting whether one was there.
+pub(crate) fn delete_saved(ctx: &AppContext, name: &AccountName) -> Result<bool> {
     let path = account_path(ctx, name);
     match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
     }
 }

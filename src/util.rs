@@ -1,4 +1,32 @@
-//! Formatting helpers that are not tied to a domain model.
+//! Small helpers that are not tied to a domain model.
+
+use anyhow::{Context, Result, bail};
+use std::io::{self, IsTerminal, Write};
+
+/// Require an explicit acknowledgement before an irreversible change.
+///
+/// Statusline auto-switch and scripted use pass `yes`; interactive shell use
+/// gets a prompt so that a typo does not silently replace a credential or
+/// delete the saved copy of one.
+pub(crate) fn confirm(question: &str, yes: bool) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !io::stdin().is_terminal() {
+        bail!("refusing to continue without confirmation on non-interactive input; pass --yes");
+    }
+
+    eprint!("{question} [y/N] ");
+    io::stderr().flush().ok();
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .context("failed to read confirmation")?;
+    match answer.trim() {
+        "y" | "Y" | "yes" | "YES" => Ok(()),
+        _ => bail!("cancelled"),
+    }
+}
 
 pub(crate) fn display_pct(value: Option<u8>) -> String {
     value.map_or_else(|| "-".to_string(), |value| format!("{value}%"))

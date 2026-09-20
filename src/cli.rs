@@ -59,7 +59,14 @@ pub(crate) enum Commands {
     /// Install the Claude Code statusLine wrapper.
     Install,
     /// Remove the Claude Code statusLine wrapper and restore the prior command.
-    Uninstall,
+    Uninstall {
+        /// Also delete every saved account credential and the router's own
+        /// directory, leaving only the binary behind.
+        #[arg(long)]
+        purge: bool,
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Internal command used by Claude Code statusLine.
     Statusline,
 }

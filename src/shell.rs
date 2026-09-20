@@ -31,10 +31,15 @@ pub(crate) fn run_statusline(command: &str, input: &str) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// Claude Code spawns `statusLine.command` through Node with `shell: true`,
+/// which on this platform is `/bin/sh -c`, and hands it the environment the
+/// session already has. Matching that exactly matters: a login shell would
+/// re-read the profile files and could give the user's command a different
+/// `PATH` than the one it runs under today.
 #[cfg(not(windows))]
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("/bin/sh");
-    shell.arg("-lc").arg(command);
+    shell.arg("-c").arg(command);
     shell
 }
 

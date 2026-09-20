@@ -25,6 +25,7 @@ The cross target runs type check the platform branches the host cannot execute; 
 | `context` | Every path the tool reads or writes |
 | `shell` | Running the inner statusline command and quoting a path into the setting |
 | `notification` | Desktop notifications and their per event markers |
+| `util` | The confirmation prompt and the statusline's short number formats |
 
 Platform branches live in `credentials`, `shell`, `notification`, and `context`, and nowhere else. `app` and `cli` hold command wiring only.
 
@@ -35,6 +36,8 @@ Platform branches live in `credentials`, `shell`, `notification`, and `context`,
 ## Adding a platform backend
 
 The credential store is the part most likely to need one. `credentials/mod.rs` selects a backend by `cfg`, and each backend provides the same six functions: `describe`, `read_active`, `write_active`, `read_saved`, `write_saved`, and `delete_saved`. A new backend is a module beside `keychain.rs` and `file.rs` plus a `cfg` arm, with no change to any caller.
+
+Two parts of that contract are easy to get wrong. `delete_saved` answers `true` only when it removed something and `false` when there was nothing to remove; reporting a removal it did not perform makes a purge look complete when it is not. And a write counts as done only once the value reads back, because a store that reports success can still have kept something else.
 
 Keep a new backend compiled on every platform and give it unit tests that run anywhere, the way `file.rs` does. A backend that only compiles on the machine that cannot run it is not covered by anything.
 

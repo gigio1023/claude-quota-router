@@ -5,11 +5,12 @@
 
 use crate::context::AppContext;
 use crate::shell;
+use crate::time::now_epoch;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn install_statusline(ctx: &AppContext) -> Result<()> {
     ctx.ensure_app_dir()?;
@@ -18,6 +19,7 @@ pub(crate) fn install_statusline(ctx: &AppContext) -> Result<()> {
     let settings_path = ctx.settings_path();
     let mut settings = load_settings(&settings_path)?;
     let command = statusline_command()?;
+    let backup = back_up(&settings_path)?;
 
     if let Some(existing) = current_command(&settings)
         && !is_our_statusline_command(&existing)
@@ -42,6 +44,9 @@ pub(crate) fn install_statusline(ctx: &AppContext) -> Result<()> {
         }
     }
     save_settings(&settings_path, &settings)?;
+    if let Some(backup) = backup {
+        println!("backed up {} to {}", settings_path.display(), backup.display());
+    }
     println!("installed Claude Code statusLine wrapper");
     Ok(())
 }
@@ -56,6 +61,7 @@ pub(crate) fn uninstall_statusline(ctx: &AppContext) -> Result<()> {
         return Ok(());
     }
 
+    let backup = back_up(&settings_path)?;
     let inner_path = ctx.inner_statusline_path();
     if inner_path.exists() {
         let inner = fs::read_to_string(&inner_path)
@@ -66,8 +72,36 @@ pub(crate) fn uninstall_statusline(ctx: &AppContext) -> Result<()> {
     }
 
     save_settings(&settings_path, &settings)?;
+    if let Some(backup) = backup {
+        println!("backed up {} to {}", settings_path.display(), backup.display());
+    }
     println!("uninstalled Claude Code statusLine wrapper");
     Ok(())
+}
+
+/// Copy `settings.json` aside before editing it.
+///
+/// This file is hand-maintained and holds far more than the statusline, so a
+/// bad edit is expensive. The name matches the `settings.json.bak-*` files
+/// Claude Code itself leaves behind, and a fresh one is written per run rather
+/// than overwriting the previous copy.
+fn back_up(path: &Path) -> Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    // Two edits in the same second would otherwise share a name, and the
+    // second copy would bury the state the first one preserved.
+    let stamp = now_epoch();
+    let mut backup = path.with_extension(format!("json.bak-{stamp}"));
+    for attempt in 1..100 {
+        if !backup.exists() {
+            break;
+        }
+        backup = path.with_extension(format!("json.bak-{stamp}-{attempt}"));
+    }
+    fs::copy(path, &backup)
+        .with_context(|| format!("failed to back up {} to {}", path.display(), backup.display()))?;
+    Ok(Some(backup))
 }
 
 fn current_command(settings: &Value) -> Option<String> {

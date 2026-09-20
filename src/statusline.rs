@@ -40,11 +40,11 @@ pub(crate) fn handle(ctx: &AppContext) -> Result<()> {
     };
 
     let inner_output = run_inner_statusline(ctx, &input);
-    let state = storage::load_state(ctx)?;
-    let config = storage::load_config(ctx)?;
-    // A broken state file or a failed Keychain read must not blank the whole
-    // statusline, which would take the user's own command down with it.
-    let router_output = render_router_output(ctx, &state, &config, &parsed).unwrap_or(None);
+    // An unreadable state file, a malformed config, or a failed Keychain call
+    // must not blank the whole statusline, which would take the user's own
+    // command down with it. Every fallible step therefore sits behind this
+    // call rather than in front of it.
+    let router_output = render_router_output(ctx, &parsed).unwrap_or(None);
 
     match (router_output.as_deref(), inner_output.as_deref()) {
         (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => println!("{a} | {b}"),
@@ -56,12 +56,9 @@ pub(crate) fn handle(ctx: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn render_router_output(
-    ctx: &AppContext,
-    state: &State,
-    config: &Config,
-    input: &Value,
-) -> Result<Option<String>> {
+fn render_router_output(ctx: &AppContext, input: &Value) -> Result<Option<String>> {
+    let state = storage::load_state(ctx)?;
+    let config = storage::load_config(ctx)?;
     let Some(current) = state.current_account.as_deref() else {
         return Ok(None);
     };
@@ -70,7 +67,7 @@ fn render_router_output(
     }
 
     let now = now_epoch();
-    let settling = is_settling(state, now);
+    let settling = is_settling(&state, now);
     let mut cache = storage::load_rate_limits(ctx)?;
 
     if !settling
@@ -83,7 +80,7 @@ fn render_router_output(
 
     let mut routing_failed = false;
     if !settling && config.mode == RoutingMode::Auto {
-        match auto_route(ctx, state, config, &cache, current, now) {
+        match auto_route(ctx, &state, &config, &cache, current, now) {
             Ok(Some(message)) => return Ok(Some(message)),
             Ok(None) => {}
             // A switch can fail on a missing or locked Keychain entry. Say so in
@@ -94,8 +91,8 @@ fn render_router_output(
 
     Ok(Some(render_segments(
         ctx,
-        state,
-        config,
+        &state,
+        &config,
         &cache,
         current,
         now,

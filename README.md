@@ -25,6 +25,14 @@ claude-quota-router list
 
 `setup` names the account after the email `claude auth status` reports, and `install` wraps the statusline command you already have rather than replacing it. From there, `switch`, `toggle`, and `status` drive the router by hand, and `config --mode auto` lets it switch on its own.
 
+## Removing it
+
+```bash
+./uninstall.sh --purge
+```
+
+This restores your old statusline command, deletes the saved credentials and this tool's directory, and takes the binary and the `PATH` line back off. Drop `--purge` to keep the saved accounts for later. The account Claude Code is signed in to is never touched.
+
 ## Documentation
 
 | Document | Contents |

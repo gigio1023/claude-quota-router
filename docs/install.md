@@ -46,3 +46,28 @@ Only `command` is replaced. Other keys on the `statusLine` object, such as `padd
 Run the command from the copy on `PATH` rather than from `target/release`, because it records its own path in the setting. `claude-quota-router uninstall` puts the saved command back.
 
 When `CLAUDE_CONFIG_DIR` is set, both commands follow it, because that is the directory Claude Code reads its settings from.
+
+## Removing it
+
+```bash
+./uninstall.sh --purge
+```
+
+The mirror of `install.sh`. It puts your old statusline command back, deletes the saved account credentials and this tool's configuration directory, removes the binary, and takes out the `PATH` line `install.sh` added, matched by its marker comment so a line you wrote by hand survives.
+
+| Option | Effect |
+|---|---|
+| `--purge` | Also delete the saved credentials and the configuration directory |
+| `--bin-dir DIR` | Look for the binary in `DIR` instead of `~/.local/bin` |
+| `--keep-path` | Leave the shell profile alone |
+
+Without `--purge` the saved accounts stay, so reinstalling later picks up where you left off.
+
+The same removal is available from the binary when you want to keep it on `PATH`:
+
+```bash
+claude-quota-router uninstall          # statusline wrapper only
+claude-quota-router uninstall --purge  # and the saved credentials and state
+```
+
+A purge asks before it deletes; `--yes` answers for it. Neither form touches the account Claude Code is signed in to, so removing the router logs you out of nothing. `settings.json` is copied to `settings.json.bak-<timestamp>` before either command edits it.

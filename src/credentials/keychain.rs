@@ -39,7 +39,12 @@ pub(crate) fn write_saved(_ctx: &AppContext, name: &AccountName, credential: &st
     upsert(ACCOUNT_SERVICE, &stored_account(name), credential)
 }
 
-pub(crate) fn delete_saved(_ctx: &AppContext, name: &AccountName) -> Result<()> {
+/// Remove a saved account credential, reporting whether one was there.
+///
+/// An account that was never stored is not an error, so a purge finishes
+/// instead of stopping at the first missing item. Anything else is an error:
+/// a locked or unavailable Keychain must not read as a completed removal.
+pub(crate) fn delete_saved(_ctx: &AppContext, name: &AccountName) -> Result<bool> {
     delete(ACCOUNT_SERVICE, &stored_account(name))
 }
 
@@ -82,7 +87,52 @@ fn read(service: &str, account: &str) -> Result<String> {
         .to_string())
 }
 
+/// Write a credential, confirm it landed, and undo the write if it did not.
+///
+/// Only a verified write counts. `security` has stored a silently truncated
+/// value and still exited 0, and either item is dangerous half-written: the
+/// active one logs the user out, and a saved one becomes the fragment that the
+/// next switch installs. So the previous value goes back, or the item goes away
+/// if there was no previous value, before the failure is reported.
 fn upsert(service: &str, account: &str, password: &str) -> Result<()> {
+    let previous = read(service, account).ok();
+    let result = write_and_verify(service, account, password);
+    if result.is_err() {
+        match previous {
+            Some(previous) => {
+                write_password(service, account, &previous).ok();
+            }
+            None => {
+                delete(service, account).ok();
+            }
+        }
+    }
+    result
+}
+
+fn write_and_verify(service: &str, account: &str, password: &str) -> Result<()> {
+    write_password(service, account, password)?;
+    let stored = read(service, account)
+        .with_context(|| format!("failed to read back service {service} account {account}"))?;
+    if stored != password {
+        bail!("Keychain kept a different value for service {service} account {account}");
+    }
+    Ok(())
+}
+
+/// Hand the credential to `security`.
+///
+/// The token travels in this child process's argv, which every process running
+/// as the same user can read out of `ps` while the call lasts. That is not a
+/// capability it gains: the Keychain items themselves are readable by any
+/// process of this user through the same `security` command. The alternatives
+/// were both worse. `-w` with no value makes `security` prompt on stdin, but
+/// that prompt truncates at 128 bytes and a Claude Code credential is over two
+/// kilobytes, so it silently stored a fragment. Calling the Security framework
+/// in process avoids argv entirely, but the Keychain ACL is keyed on the
+/// calling binary, so reading Claude Code's own item would raise a modal
+/// authorization dialog, and the statusline renders too often for that.
+fn write_password(service: &str, account: &str, password: &str) -> Result<()> {
     let output = Command::new("security")
         .args([
             "add-generic-password",
@@ -105,15 +155,22 @@ fn upsert(service: &str, account: &str, password: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete(service: &str, account: &str) -> Result<()> {
+/// `security` exits 44 when the item is not in the keychain at all.
+const ITEM_NOT_FOUND: i32 = 44;
+
+fn delete(service: &str, account: &str) -> Result<bool> {
     let output = Command::new("security")
         .args(["delete-generic-password", "-s", service, "-a", account])
         .output()
         .with_context(|| format!("failed to run security for service {service}"))?;
-    if !output.status.success() {
-        bail!("security delete-generic-password failed");
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(ITEM_NOT_FOUND) => Ok(false),
+        _ => bail!(
+            "security delete-generic-password failed for service {service} account {account}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
     }
-    Ok(())
 }
 
 fn stored_account(name: &AccountName) -> String {
@@ -149,4 +206,5 @@ attributes:
             Some("me@example.com")
         );
     }
+
 }
