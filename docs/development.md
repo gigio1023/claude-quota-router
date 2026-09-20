@@ -28,6 +28,10 @@ The cross target runs type check the platform branches the host cannot execute; 
 
 Platform branches live in `credentials`, `shell`, `notification`, and `context`, and nowhere else. `app` and `cli` hold command wiring only.
 
+## The README figure
+
+`docs/figures/switch-loop.svg` is rendered from `switch-loop.d2` beside it, which carries the exact command in a comment at the top. Keep the source and the render together, and check after a change that no label falls below 12px at a 720px delivery width.
+
 ## Adding a platform backend
 
 The credential store is the part most likely to need one. `credentials/mod.rs` selects a backend by `cfg`, and each backend provides the same six functions: `describe`, `read_active`, `write_active`, `read_saved`, `write_saved`, and `delete_saved`. A new backend is a module beside `keychain.rs` and `file.rs` plus a `cfg` arm, with no change to any caller.

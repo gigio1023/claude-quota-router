@@ -1,3 +1,9 @@
+# Rendered with the technical-diagram skill:
+#   bash scripts/render_d2.sh switch-loop.d2 switch-loop.svg \
+#     --elk-nodeNodeBetweenLayers 40 --elk-edgeNodeBetweenLayers 24
+# ELK spacing is not expressible in d2-config, and the defaults render the same
+# figure at 646x589 instead of 606x461.
+
 vars: {
   d2-config: {
     layout-engine: elk
@@ -17,7 +23,7 @@ active: "active credential" {class: entity}
 
 claude -> router: "rate_limits on stdin" {class: flow}
 config -> router: "priority order" {class: flow}
-router -> cache: "files each reading" {class: flow}
+router -> cache: "each reading" {class: flow}
 cache -> router: "resets_at of a blocked account" {class: flow}
 saved -> router: "next in the order" {class: flow}
 router -> active: "at 100%, mode auto" {class: flow}
