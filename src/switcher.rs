@@ -115,20 +115,34 @@ fn refresh_current_backup(
     target: &AccountName,
     active_credential: &str,
 ) -> Result<()> {
-    if let Some(current_account) = state.current_account.as_deref()
-        && current_account != target.as_str()
-        && state.accounts.contains_key(current_account)
-        // After `claude auth logout` the active record is still there with its
-        // tokens blanked. Copying that over the saved account would destroy the
-        // only working copy of that login.
-        && claude::has_oauth_token(active_credential)
-    {
-        let current_name = AccountName::parse(current_account)?;
-        credentials::write_saved(ctx, &current_name, active_credential).with_context(|| {
-            format!("failed to update current account backup for {current_account}")
-        })?;
+    let Some(current_account) = state.current_account.as_deref() else {
+        return Ok(());
+    };
+    if current_account == target.as_str() || !state.accounts.contains_key(current_account) {
+        return Ok(());
     }
-    Ok(())
+    // After `claude auth logout` the active record is still there with its
+    // tokens blanked. Copying that over the saved account would destroy the
+    // only working copy of that login.
+    if !claude::has_oauth_token(active_credential) {
+        return Ok(());
+    }
+    // A credential carries no account identity, so the only proof available that
+    // the active one is not some other login is that it is not already filed
+    // under another name. That happens when the user signs in as an account the
+    // router already knows and does not run `setup`.
+    if let Some(owner) = saved_account_for_credential(ctx, state, active_credential)?
+        && owner != current_account
+    {
+        bail!(
+            "the active credential is saved as {owner}, but the router has {current_account} as \
+             the current account; run `setup` to record the account you are signed in to"
+        );
+    }
+
+    let current_name = AccountName::parse(current_account)?;
+    credentials::write_saved(ctx, &current_name, active_credential)
+        .with_context(|| format!("failed to update current account backup for {current_account}"))
 }
 
 /// Drop the quota state that the switch invalidates.
