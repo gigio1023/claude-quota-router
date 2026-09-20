@@ -31,13 +31,14 @@ Run `setup` once per account, each time while Claude Code is signed in to that a
    claude-quota-router setup
    ```
 
-2. Sign in to the next account and save that one too. Repeat for every account you want in the rotation.
+2. Sign in as the next account and save that one too. Repeat for every account you want in the rotation.
 
    ```bash
-   claude auth logout
    claude auth login
    claude-quota-router setup
    ```
+
+   Do not run `claude auth logout` for this. Logging out empties the credential Claude Code is holding without removing the record, which leaves Claude Code signed out and its statusline with no quota to report. `setup` refuses to save a credential in that state, and `claude-quota-router switch <name>` puts a working one back.
 
 3. Put the accounts in the order you want them used.
 
@@ -55,9 +56,10 @@ Run `setup` once per account, each time while Claude Code is signed in to that a
 
    This wraps the statusline command you already have rather than replacing it. Your command keeps running on every render and its output is printed after the router's own. Only `command` on the `statusLine` object changes, so keys such as `padding` survive, and `settings.json` is copied to `settings.json.bak-<timestamp>` first.
 
-5. Check the result.
+5. Move to the account you want to start on, then check the result.
 
    ```bash
+   claude-quota-router switch me@work.com
    claude-quota-router list
    ```
 
@@ -132,6 +134,7 @@ A purge asks before it deletes; `--yes` answers for it. None of these touch the 
 - **That lag reaches `claude auth status`,** which is where `setup` gets its default name. Running `setup` right after a switch would file the new credential under the previous account's name, so it refuses when the active credential is already saved under another name. Sign in properly with `claude auth login`, or pass the name yourself.
 - **Saved credentials are real credentials.** On macOS they are Keychain items under the service `claude-quota-router`; elsewhere they are owner-only files. They carry a live refresh token, so treat them the way you treat the login itself.
 - **A broken state file costs you the router, not your statusline.** If this tool's own files cannot be read, it prints nothing and your original command still renders.
+- **No quota in the statusline usually means Claude Code is signed out.** Claude Code leaves `rate_limits` out of the statusline payload entirely when it has no live quota window, and neither this tool nor your own command can show a number that is not in the payload. `claude-quota-router status` prints a `signed in:` line, and `claude auth status` reports `loggedIn`.
 
 ## Documentation
 

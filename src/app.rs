@@ -73,6 +73,9 @@ impl App {
         let mut state = storage::load_state(&self.ctx)?;
         let credential = credentials::read_active(&self.ctx)
             .context("failed to read the active Claude Code credential")?;
+        if !claude::has_oauth_token(&credential) {
+            bail!("Claude Code is signed out; run `claude auth login` and try again");
+        }
         // Prefer an explicit CLI override for import and migration cases,
         // then what Claude Code reports, then the credential JSON shape.
         let kind = kind
@@ -228,6 +231,7 @@ impl App {
             state.previous_account.as_deref().unwrap_or("none")
         );
         println!("credential store: {}", credentials::describe(&self.ctx));
+        println!("signed in: {}", describe_active(&self.ctx));
         print_config(&config, &state);
         println!("accounts: {}", state.accounts.len());
 
@@ -331,6 +335,19 @@ fn clean_priority(priority: Vec<String>, state: &State) -> Result<Vec<String>> {
         }
     }
     Ok(cleaned)
+}
+
+/// Whether Claude Code currently holds a usable credential.
+///
+/// Worth one Keychain read on an explicit `status`: a signed-out Claude Code
+/// sends a statusline payload with no quota in it, which otherwise looks like
+/// the router having nothing to say.
+fn describe_active(ctx: &crate::context::AppContext) -> &'static str {
+    match credentials::read_active(ctx) {
+        Ok(credential) if claude::has_oauth_token(&credential) => "yes",
+        Ok(_) => "no, Claude Code is signed out; run `claude auth login`",
+        Err(_) => "unknown, the active credential could not be read",
+    }
 }
 
 fn describe_quota(snapshot: &RateLimitSnapshot, now: i64) -> String {

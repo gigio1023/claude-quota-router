@@ -4,6 +4,7 @@
 //! one module makes it easier to see the ordering: refresh the current backup,
 //! activate the target credential, update state, then reset quota side effects.
 
+use crate::claude;
 use crate::context::AppContext;
 use crate::credentials;
 use crate::domain::{AccountName, State};
@@ -35,6 +36,12 @@ pub(crate) fn switch_to(
 
     let target_credential = credentials::read_saved(ctx, name)
         .with_context(|| format!("failed to read saved credential for {name}"))?;
+    if !claude::has_oauth_token(&target_credential) {
+        bail!(
+            "the saved credential for {name} carries no token, so activating it would log you out; \
+             sign in as that account and run `setup {name}` again"
+        );
+    }
     let old_current = state.current_account.clone();
 
     if active_credential == target_credential {
@@ -111,7 +118,10 @@ fn refresh_current_backup(
     if let Some(current_account) = state.current_account.as_deref()
         && current_account != target.as_str()
         && state.accounts.contains_key(current_account)
-        && !active_credential.is_empty()
+        // After `claude auth logout` the active record is still there with its
+        // tokens blanked. Copying that over the saved account would destroy the
+        // only working copy of that login.
+        && claude::has_oauth_token(active_credential)
     {
         let current_name = AccountName::parse(current_account)?;
         credentials::write_saved(ctx, &current_name, active_credential).with_context(|| {

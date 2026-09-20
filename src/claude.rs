@@ -45,6 +45,22 @@ fn parse_status(payload: &[u8]) -> Option<AuthStatus> {
     })
 }
 
+/// Whether a credential actually carries an OAuth token.
+///
+/// `claude auth logout` leaves the credential record in place with its metadata
+/// and empty token strings, and Claude Code reports that state as logged out.
+/// Treating it as a credential would let the router back it up over a saved
+/// account, or activate it and log the user out.
+pub(crate) fn has_oauth_token(credential: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(credential) else {
+        return false;
+    };
+    value
+        .pointer("/claudeAiOauth/accessToken")
+        .and_then(Value::as_str)
+        .is_some_and(|token| !token.is_empty())
+}
+
 pub(crate) fn detect_account_kind_from_credential(credential: &str) -> Option<AccountKind> {
     let value: Value = serde_json::from_str(credential).ok()?;
     value
@@ -56,6 +72,17 @@ pub(crate) fn detect_account_kind_from_credential(credential: &str) -> Option<Ac
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_a_credential_whose_tokens_were_cleared() {
+        assert!(has_oauth_token(r#"{"claudeAiOauth":{"accessToken":"abc"}}"#));
+        // What `claude auth logout` leaves behind.
+        assert!(!has_oauth_token(
+            r#"{"claudeAiOauth":{"accessToken":"","subscriptionType":"max"}}"#
+        ));
+        assert!(!has_oauth_token("{}"));
+        assert!(!has_oauth_token("not json"));
+    }
 
     #[test]
     fn reads_email_and_plan_from_auth_status() {
