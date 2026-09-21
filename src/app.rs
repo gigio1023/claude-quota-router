@@ -45,7 +45,7 @@ impl App {
                 mode,
                 priority,
             } => self.config(alert_at, mode, priority),
-            Commands::Install => settings::install_statusline(&self.ctx),
+            Commands::StatuslineInstall => settings::install_statusline(&self.ctx),
             Commands::Uninstall { purge, yes } => self.uninstall(purge, yes),
             Commands::Statusline => statusline::handle(&self.ctx),
         }

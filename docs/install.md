@@ -36,14 +36,14 @@ cp target/release/claude-quota-router ~/.local/bin/
 ## The statusline wrapper
 
 ```bash
-claude-quota-router install
+claude-quota-router statusline-install
 ```
 
 This writes `statusLine.command` in Claude Code's `settings.json` and saves whatever command was there. The router runs your old command on every render, feeds it the same JSON Claude Code sent, and prints its output after its own, so the statusline you already had keeps working.
 
 Only `command` is replaced. Other keys on the `statusLine` object, such as `padding`, are left as they are, and the rest of `settings.json` keeps its key order.
 
-Run the command from the copy on `PATH` rather than from `target/release`, because it records its own path in the setting. `claude-quota-router uninstall` puts the saved command back.
+The name keeps it apart from `install.sh`, which only builds the binary, puts it on `PATH`, and never touches `settings.json`. Run it from the copy on `PATH` rather than from `target/release`, because it records its own path in the setting. `claude-quota-router uninstall` puts the saved command back.
 
 When `CLAUDE_CONFIG_DIR` is set, both commands follow it, because that is the directory Claude Code reads its settings from.
 

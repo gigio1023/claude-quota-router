@@ -51,12 +51,12 @@ Run `setup` once per account, each time while Claude Code is signed in to that a
 4. Hook up the statusline, then restart Claude Code.
 
    ```bash
-   claude-quota-router install
+   claude-quota-router statusline-install
    ```
 
    This wraps the statusline command you already have rather than replacing it. Your command keeps running on every render and its output is printed after the router's own. Only `command` on the `statusLine` object changes, so keys such as `padding` survive, and `settings.json` is copied to `settings.json.bak-<timestamp>` first.
 
-   That puts the router's segment at the front of the line, which is one opinion about a setting that is yours. If you want it somewhere else, or your statusline is built in a way the wrapper does not suit, skip `install` and paste this into Claude Code instead:
+   That puts the router's segment at the front of the line, which is one opinion about a setting that is yours. If you want it somewhere else, or your statusline is built in a way the wrapper does not suit, skip `statusline-install` and paste this into Claude Code instead:
 
    ```text
    I installed a CLI called claude-quota-router and want its segment in my Claude Code statusline.
@@ -73,7 +73,7 @@ Run `setup` once per account, each time while Claude Code is signed in to that a
    Back the file up before you edit it, and show me the command you ended up with.
    ```
 
-   Wired this way the router prints only its own segment, because the command it would otherwise re-run is the one `install` records and you never ran it.
+   Wired this way the router prints only its own segment, because the command it would otherwise re-run is the one `statusline-install` records and you never ran it.
 
 5. Move to the account you want to start on, then check the result.
 

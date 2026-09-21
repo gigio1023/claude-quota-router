@@ -57,7 +57,10 @@ pub(crate) enum Commands {
         priority: Option<Vec<String>>,
     },
     /// Install the Claude Code statusLine wrapper.
-    Install,
+    ///
+    /// Named apart from `install.sh`, which only puts the binary on PATH and
+    /// never edits Claude Code's settings.
+    StatuslineInstall,
     /// Remove the Claude Code statusLine wrapper and restore the prior command.
     Uninstall {
         /// Also delete every saved account credential and the router's own
