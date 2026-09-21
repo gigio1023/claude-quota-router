@@ -66,8 +66,10 @@ Without `--purge` the saved accounts stay, so reinstalling later picks up where 
 The same removal is available from the binary when you want to keep it on `PATH`:
 
 ```bash
-claude-quota-router uninstall          # statusline wrapper only
-claude-quota-router uninstall --purge  # and the saved credentials and state
+claude-quota-router statusline-uninstall  # the wrapper, putting your previous command back
+claude-quota-router purge                 # the saved credentials and the state directory
 ```
+
+These are separate because they undo different things: one a setting inside Claude Code, the other this tool's own copies. Neither removes the binary.
 
 A purge asks before it deletes; `--yes` answers for it. Neither form touches the account Claude Code is signed in to, so removing the router logs you out of nothing. `settings.json` is copied to `settings.json.bak-<timestamp>` before either command edits it.

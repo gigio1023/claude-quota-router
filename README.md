@@ -139,10 +139,10 @@ This restores your old statusline command, deletes the saved credentials and thi
 
 | Command | Removes |
 |---|---|
-| `./uninstall.sh --purge` | Everything, including the binary and the `PATH` line |
+| `./uninstall.sh --purge` | Everything: the wrapper, the saved accounts, the binary, and the `PATH` line |
 | `./uninstall.sh` | The same, but keeps the saved accounts for later |
-| `claude-quota-router uninstall --purge` | Saved credentials and state, keeping the binary on `PATH` |
-| `claude-quota-router uninstall` | The statusline wrapper only |
+| `claude-quota-router statusline-uninstall` | The wrapper, putting your previous command back |
+| `claude-quota-router purge` | The saved credentials and the state directory |
 
 A purge asks before it deletes; `--yes` answers for it. None of these touch the account Claude Code is signed in to, so removing the router logs you out of nothing.
 

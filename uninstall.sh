@@ -58,13 +58,15 @@ binary="$BIN_DIR/claude-quota-router"
 # Restore the statusline through the binary while it is still there. Its own
 # uninstall is what knows which command it replaced.
 if [ -x "$binary" ]; then
+    "$binary" statusline-uninstall
     if [ "$PURGE" -eq 1 ]; then
-        "$binary" uninstall --purge --yes
-    else
-        "$binary" uninstall
+        "$binary" purge --yes
     fi
 else
     echo "no binary at $binary; skipped the statusLine step"
+    if [ "$PURGE" -eq 1 ]; then
+        echo "saved credentials were left in place"
+    fi
 fi
 
 if [ -e "$binary" ]; then

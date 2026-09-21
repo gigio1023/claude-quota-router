@@ -46,7 +46,8 @@ impl App {
                 priority,
             } => self.config(alert_at, mode, priority),
             Commands::StatuslineInstall => settings::install_statusline(&self.ctx),
-            Commands::Uninstall { purge, yes } => self.uninstall(purge, yes),
+            Commands::StatuslineUninstall => settings::uninstall_statusline(&self.ctx),
+            Commands::Purge { yes } => self.purge(yes),
             Commands::Statusline => statusline::handle(&self.ctx),
         }
     }
@@ -246,18 +247,13 @@ impl App {
         Ok(())
     }
 
-    /// Undo the statusline install, and on request every trace the tool keeps.
+    /// The counterpart of `setup`.
     ///
-    /// A purge is the counterpart of `setup`: it removes the saved credentials
-    /// and the state directory, which is everything this tool owns apart from
-    /// the binary and the `PATH` line `install.sh` wrote. The credential Claude
-    /// Code is logged in with is never touched.
-    fn uninstall(&self, purge: bool, yes: bool) -> Result<()> {
-        settings::uninstall_statusline(&self.ctx)?;
-        if !purge {
-            return Ok(());
-        }
-
+    /// Removes the saved credentials and the state directory, which is
+    /// everything this tool owns apart from the binary and the `PATH` line
+    /// `install.sh` wrote. The credential Claude Code is logged in with is
+    /// never touched, and neither is the statusLine setting.
+    fn purge(&self, yes: bool) -> Result<()> {
         let state = storage::load_state(&self.ctx)?;
         confirm(
             &format!(
