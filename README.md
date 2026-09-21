@@ -51,10 +51,29 @@ Run `setup` once per account, each time while Claude Code is signed in to that a
 4. Hook up the statusline, then restart Claude Code.
 
    ```bash
-   claude-quota-router install
+   claude-quota-router statusline-install
    ```
 
    This wraps the statusline command you already have rather than replacing it. Your command keeps running on every render and its output is printed after the router's own. Only `command` on the `statusLine` object changes, so keys such as `padding` survive, and `settings.json` is copied to `settings.json.bak-<timestamp>` first.
+
+   That puts the router's segment at the front of the line, which is one opinion about a setting that is yours. If you want it somewhere else, or your statusline is built in a way the wrapper does not suit, skip `statusline-install` and paste this into Claude Code instead:
+
+   ```text
+   I installed a CLI called claude-quota-router and want its segment in my Claude Code statusline.
+
+   The command is `claude-quota-router statusline`. It reads the same JSON payload on stdin that
+   Claude Code gives any statusLine command, prints one short segment on stdout, prints nothing
+   when it has nothing to report, and always exits 0.
+
+   Please wire it into statusLine.command in ~/.claude/settings.json. If I already have a
+   statusLine command, keep it and show both parts, and put the router's segment wherever suits
+   my line best. Watch out for stdin: it can only be read once, so buffer the payload and give
+   the same text to each command rather than piping stdin straight through to both.
+
+   Back the file up before you edit it, and show me the command you ended up with.
+   ```
+
+   Wired this way the router prints only its own segment, because the command it would otherwise re-run is the one `statusline-install` records and you never ran it.
 
 5. Move to the account you want to start on, then check the result.
 
@@ -120,10 +139,10 @@ This restores your old statusline command, deletes the saved credentials and thi
 
 | Command | Removes |
 |---|---|
-| `./uninstall.sh --purge` | Everything, including the binary and the `PATH` line |
+| `./uninstall.sh --purge` | Everything: the wrapper, the saved accounts, the binary, and the `PATH` line |
 | `./uninstall.sh` | The same, but keeps the saved accounts for later |
-| `claude-quota-router uninstall --purge` | Saved credentials and state, keeping the binary on `PATH` |
-| `claude-quota-router uninstall` | The statusline wrapper only |
+| `claude-quota-router statusline-uninstall` | The wrapper, putting your previous command back |
+| `claude-quota-router purge` | The saved credentials and the state directory |
 
 A purge asks before it deletes; `--yes` answers for it. None of these touch the account Claude Code is signed in to, so removing the router logs you out of nothing.
 

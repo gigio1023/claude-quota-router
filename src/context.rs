@@ -12,7 +12,7 @@ use std::path::PathBuf;
 const APP_HOME_ENV: &str = "CLAUDE_QUOTA_ROUTER_HOME";
 const CLAUDE_HOME_ENV: &str = "CLAUDE_HOME";
 /// Claude Code's own override for its config directory. Honoring it keeps
-/// `install` from writing a `settings.json` that Claude Code never reads.
+/// `statusline-install` from writing a `settings.json` Claude Code never reads.
 const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 #[derive(Clone, Debug)]
