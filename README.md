@@ -2,7 +2,7 @@
 
 Claude Quota Router keeps Claude Code on an account that still has quota. It reads the quota Claude Code hands to the statusline, remembers what each saved account had left when you were last on it, and moves the active credential down an order you set. Personal, team, and enterprise plans are all routed the same way.
 
-![The statusline command receives rate_limits from Claude Code, files one reading per account into rate-limits.json, takes the account order from config.json, and replaces the active credential with a saved one when the current account reaches its limit.](docs/figures/switch-loop.svg)
+![Claude Code runs the router as its statusLine.command and hands it rate_limits. The router files the reading under the current account in rate-limits.json, picks the first account the order in config.json still allows, and replaces the active credential with the one saved for that account, which Claude Code picks up at the next session.](docs/figures/switch-loop.svg)
 
 ## Install
 
