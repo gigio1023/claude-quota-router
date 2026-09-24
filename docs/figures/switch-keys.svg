@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 480" width="720" height="480" role="img" aria-labelledby="title desc">
+  <title id="title">What a switch writes into Claude Code's credential record</title>
+  <desc id="desc">Before: switching to saved account B overwrote the whole Claude Code-credentials record with B's saved copy, so MCP and plugin tokens went back to the moment B was saved. After: the switch takes only the account keys from B's saved copy and keeps every other key from the active record, so MCP and plugin tokens stay current.</desc>
+  <defs>
+    <marker id="arrow-ink" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible">
+      <path d="M1 1 L7 4 L1 7" fill="none" stroke="#0D0D0D" stroke-width="1.2"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible">
+      <path d="M1 1 L7 4 L1 7" fill="none" stroke="#929591" stroke-width="1.2"/>
+    </marker>
+  </defs>
+  <style>
+    .entity { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 14px; fill: #0D0D0D; text-anchor: middle; }
+    .keys { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; fill: #0D0D0D; text-anchor: middle; }
+    .keys-m { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; fill: #929591; text-anchor: middle; }
+    .panel { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; fill: #929591; text-anchor: start; }
+    .edge-l { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; fill: #0D0D0D; text-anchor: start; }
+    .edge-lm { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; fill: #929591; text-anchor: start; }
+    .box { fill: #FFFFFF; stroke: #0D0D0D; stroke-width: 1.2; }
+    .box-accent { fill: #EAF1FE; stroke: #2E4780; stroke-width: 1.2; }
+    .flow { fill: none; stroke: #0D0D0D; stroke-width: 1.2; }
+    .flow-secondary { fill: none; stroke: #929591; stroke-width: 1.2; stroke-dasharray: 2 2; }
+  </style>
+  <rect width="720" height="480" fill="#FFFFFF"/>
+  <text class="panel" x="24" y="24">before</text>
+  <g id="before-saved">
+    <rect class="box" x="24" y="38" width="264" height="80" rx="16"/>
+    <text class="entity" x="156" y="64">saved account B</text>
+    <text class="keys" x="156" y="86">account keys: B</text>
+    <text class="keys" x="156" y="104">mcpOAuth, pluginSecrets: at setup</text>
+  </g>
+  <g id="before-active">
+    <rect class="box" x="24" y="142" width="264" height="80" rx="16"/>
+    <text class="entity" x="156" y="168">Claude Code-credentials</text>
+    <text class="keys" x="156" y="190">account keys: A</text>
+    <text class="keys" x="156" y="208">mcpOAuth, pluginSecrets: now</text>
+  </g>
+  <g id="before-result">
+    <rect class="box" x="432" y="90" width="264" height="80" rx="16"/>
+    <text class="entity" x="564" y="116">Claude Code-credentials</text>
+    <text class="keys" x="564" y="138">account keys: B</text>
+    <text class="keys-m" x="564" y="156">mcpOAuth, pluginSecrets: at setup</text>
+  </g>
+  <g id="before-e-saved">
+    <path class="flow" d="M288 78 H360 V118 H431" marker-end="url(#arrow-ink)"/>
+    <text class="edge-l" x="296" y="71">whole record</text>
+  </g>
+  <g id="before-e-active">
+    <path class="flow-secondary" d="M288 182 H360 V142 H431" marker-end="url(#arrow-muted)"/>
+    <text class="edge-lm" x="296" y="200">overwritten</text>
+  </g>
+  <text class="panel" x="24" y="272">after</text>
+  <g id="after-saved">
+    <rect class="box" x="24" y="286" width="264" height="80" rx="16"/>
+    <text class="entity" x="156" y="312">saved account B</text>
+    <text class="keys" x="156" y="334">account keys: B</text>
+  </g>
+  <g id="after-active">
+    <rect class="box" x="24" y="390" width="264" height="80" rx="16"/>
+    <text class="entity" x="156" y="416">Claude Code-credentials</text>
+    <text class="keys" x="156" y="438">account keys: A</text>
+    <text class="keys" x="156" y="456">mcpOAuth, pluginSecrets: now</text>
+  </g>
+  <g id="after-result">
+    <rect class="box-accent" x="432" y="338" width="264" height="80" rx="16"/>
+    <text class="entity" x="564" y="364">Claude Code-credentials</text>
+    <text class="keys" x="564" y="386">account keys: B</text>
+    <text class="keys" x="564" y="404">mcpOAuth, pluginSecrets: now</text>
+  </g>
+  <g id="after-e-saved">
+    <path class="flow" d="M288 326 H360 V366 H431" marker-end="url(#arrow-ink)"/>
+    <text class="edge-l" x="296" y="319">account keys</text>
+  </g>
+  <g id="after-e-active">
+    <path class="flow" d="M288 430 H360 V390 H431" marker-end="url(#arrow-ink)"/>
+    <text class="edge-l" x="296" y="448">every other key</text>
+  </g>
+</svg>

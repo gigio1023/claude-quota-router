@@ -2,7 +2,8 @@
 //!
 //! Switching touches both secret storage and local metadata. Keeping the flow in
 //! one module makes it easier to see the ordering: refresh the current backup,
-//! activate the target credential, update state, then reset quota side effects.
+//! put the target account's login into the active credential, update state,
+//! then reset quota side effects.
 
 use crate::claude;
 use crate::context::AppContext;
@@ -44,7 +45,7 @@ pub(crate) fn switch_to(
     }
     let old_current = state.current_account.clone();
 
-    if active_credential == target_credential {
+    if claude::same_login(&active_credential, &target_credential) {
         state.current_account = Some(name.to_string());
         storage::save_state(ctx, &state)?;
         if options.emit {
@@ -53,7 +54,8 @@ pub(crate) fn switch_to(
         return Ok(());
     }
 
-    credentials::write_active(ctx, &target_credential)
+    let switched = claude::with_login(&active_credential, &target_credential);
+    credentials::write_active(ctx, &switched)
         .with_context(|| format!("failed to activate account {name}"))?;
 
     if old_current.as_deref() != Some(name.as_str()) {
@@ -84,10 +86,10 @@ pub(crate) fn detect_current_account_by_credential(
     Ok(found)
 }
 
-/// The saved account holding exactly this credential, if one does.
+/// The saved account holding this credential's login, if one does.
 ///
-/// Credentials are compared rather than trusted from a name, because the only
-/// thing that reliably identifies a login here is the token itself.
+/// Logins are compared rather than trusted from a name, because the only thing
+/// that reliably identifies a login here is the token itself.
 pub(crate) fn saved_account_for_credential(
     ctx: &AppContext,
     state: &State,
@@ -96,7 +98,7 @@ pub(crate) fn saved_account_for_credential(
     for name in state.accounts.keys() {
         let account_name = AccountName::parse(name)?;
         if let Ok(saved) = credentials::read_saved(ctx, &account_name)
-            && saved == credential
+            && claude::same_login(&saved, credential)
         {
             return Ok(Some(name.clone()));
         }
@@ -141,7 +143,8 @@ fn refresh_current_backup(
     }
 
     let current_name = AccountName::parse(current_account)?;
-    credentials::write_saved(ctx, &current_name, active_credential)
+    let login = claude::account_login(active_credential);
+    credentials::write_saved(ctx, &current_name, &login)
         .with_context(|| format!("failed to update current account backup for {current_account}"))
 }
 

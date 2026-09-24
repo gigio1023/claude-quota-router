@@ -1,8 +1,8 @@
 # Claude Quota Router
 
-Claude Quota Router keeps Claude Code on an account that still has quota. It reads the quota Claude Code hands to the statusline, remembers what each saved account had left when you were last on it, and moves the active credential down an order you set. Personal, team, and enterprise plans are all routed the same way.
+Claude Quota Router keeps Claude Code on an account that still has quota. It reads the quota Claude Code hands to the statusline, remembers what each saved account had left when you were last on it, and moves Claude Code's login down an order you set. Only the login changes: MCP servers and plugins you authorized stay authorized on every account. Personal, team, and enterprise plans are all routed the same way.
 
-![Claude Code runs the router as its statusLine.command and hands it rate_limits. The router files the reading under the current account in rate-limits.json, picks the first account the order in config.json still allows, and replaces the active credential with the one saved for that account, which Claude Code picks up at the next session.](docs/figures/switch-loop.svg)
+![Claude Code runs the router as its statusLine.command and hands it rate_limits. The router files the reading under the current account in rate-limits.json, picks the first account the order in config.json still allows, and puts that account's saved login into Claude Code's credential, which Claude Code picks up at the next session.](docs/figures/switch-loop.svg)
 
 ## Install
 
@@ -149,9 +149,10 @@ A purge asks before it deletes; `--yes` answers for it. None of these touch the 
 ## Good to know
 
 - **Restart Claude Code after a switch.** A running session holds the credential it started with. The statusline says so when it switches for you.
-- **The account Claude Code displays lags behind.** A switch replaces the active credential and nothing else. The `oauthAccount` block in `~/.claude.json` keeps the previous email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account regardless, because the OAuth token decides that.
+- **A switch changes the account and nothing else.** Only the Claude login inside the active credential is replaced, so MCP servers and plugins you authorized stay authorized. [Platforms](docs/platforms.md#what-a-switch-does-not-change) lists the keys.
+- **The account Claude Code displays lags behind.** The `oauthAccount` block in `~/.claude.json` keeps the previous email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account regardless, because the OAuth token decides that.
 - **That lag reaches `claude auth status`,** which is where `setup` gets its default name. Running `setup` right after a switch would file the new credential under the previous account's name, so it refuses when the active credential is already saved under another name. Sign in properly with `claude auth login`, or pass the name yourself.
-- **Saved credentials are real credentials.** On macOS they are Keychain items under the service `claude-quota-router`; elsewhere they are owner-only files. They carry a live refresh token, so treat them the way you treat the login itself.
+- **Saved credentials are real credentials.** On macOS they are Keychain items under the service `claude-quota-router`; elsewhere they are owner-only files. Each holds only that account's Claude login, not your MCP or plugin tokens, but it carries a live refresh token, so treat them the way you treat the login itself.
 - **A broken state file costs you the router, not your statusline.** If this tool's own files cannot be read, it prints nothing and your original command still renders.
 - **No quota in the statusline usually means Claude Code is signed out.** Claude Code leaves `rate_limits` out of the statusline payload entirely when it has no live quota window, and neither this tool nor your own command can show a number that is not in the payload. `claude-quota-router status` prints a `signed in:` line, and `claude auth status` reports `loggedIn`.
 
