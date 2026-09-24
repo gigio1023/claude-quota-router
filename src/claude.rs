@@ -6,7 +6,7 @@
 //! where the command is unavailable.
 
 use crate::domain::AccountKind;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::process::Command;
 
 #[derive(Clone, Debug, Default)]
@@ -61,6 +61,58 @@ pub(crate) fn has_oauth_token(credential: &str) -> bool {
         .is_some_and(|token| !token.is_empty())
 }
 
+/// The keys of the credential record that belong to the signed-in account.
+///
+/// Claude Code keeps one record for the whole machine: next to the account's
+/// login it holds MCP server OAuth tokens, plugin secrets, and gateway pins.
+/// These are the keys Claude Code itself drops when another account signs in,
+/// so they are the only ones a switch may replace. Every other key survives it.
+const ACCOUNT_KEYS: [&str; 5] = [
+    "claudeAiOauth",
+    "organizationUuid",
+    "trustedDeviceToken",
+    "enterpriseGateway",
+    "designOauth",
+];
+
+fn account_part(credential: &str) -> Map<String, Value> {
+    let mut record = parse_record(credential);
+    record.retain(|key, _| ACCOUNT_KEYS.contains(&key.as_str()));
+    record
+}
+
+fn parse_record(credential: &str) -> Map<String, Value> {
+    match serde_json::from_str(credential) {
+        Ok(Value::Object(record)) => record,
+        _ => Map::new(),
+    }
+}
+
+/// The account's own part of a credential record, which is what gets saved.
+///
+/// A saved copy of the whole record would carry the machine's MCP tokens along,
+/// and restoring it later would roll them back to that moment.
+pub(crate) fn account_login(credential: &str) -> String {
+    Value::Object(account_part(credential)).to_string()
+}
+
+/// Whether two credential records hold the same account login.
+///
+/// The rest of the record changes whenever an MCP server is authorized, so it
+/// cannot take part in telling logins apart.
+pub(crate) fn same_login(left: &str, right: &str) -> bool {
+    let left = account_part(left);
+    !left.is_empty() && left == account_part(right)
+}
+
+/// The active record with its account login replaced by a saved one.
+pub(crate) fn with_login(active: &str, saved: &str) -> String {
+    let mut record = parse_record(active);
+    record.retain(|key, _| !ACCOUNT_KEYS.contains(&key.as_str()));
+    record.extend(account_part(saved));
+    Value::Object(record).to_string()
+}
+
 pub(crate) fn detect_account_kind_from_credential(credential: &str) -> Option<AccountKind> {
     let value: Value = serde_json::from_str(credential).ok()?;
     value
@@ -82,6 +134,23 @@ mod tests {
         ));
         assert!(!has_oauth_token("{}"));
         assert!(!has_oauth_token("not json"));
+    }
+
+    #[test]
+    fn a_switch_replaces_only_the_account_login() {
+        let active = r#"{"mcpOAuth":{"linear":"now"},"claudeAiOauth":{"accessToken":"a"},"trustedDeviceToken":"a"}"#;
+        let saved = r#"{"mcpOAuth":{"linear":"then"},"claudeAiOauth":{"accessToken":"b"}}"#;
+        let switched: Value = serde_json::from_str(&with_login(active, saved)).unwrap();
+        assert_eq!(
+            switched,
+            serde_json::json!({"mcpOAuth":{"linear":"now"},"claudeAiOauth":{"accessToken":"b"}})
+        );
+        assert!(same_login(&switched.to_string(), saved));
+        assert!(!same_login(active, saved));
+        assert_eq!(
+            account_login(saved),
+            r#"{"claudeAiOauth":{"accessToken":"b"}}"#
+        );
     }
 
     #[test]

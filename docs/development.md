@@ -31,7 +31,7 @@ Platform branches live in `credentials`, `shell`, `notification`, and `context`,
 
 ## The README figure
 
-`docs/figures/switch-loop.svg` is hand-authored, so the file is its own source. Edit the coordinates in place, reuse the colors already declared in its `<style>` block, and keep every label at 12px or larger at a 720px delivery width.
+The SVGs in `docs/figures/` are hand-authored, so each file is its own source. Edit the coordinates in place, reuse the colors already declared in its `<style>` block, and keep every label at 12px or larger at a 720px delivery width.
 
 ## Adding a platform backend
 

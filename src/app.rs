@@ -97,7 +97,8 @@ impl App {
             );
         }
 
-        credentials::write_saved(&self.ctx, &name, &credential)
+        let login = claude::account_login(&credential);
+        credentials::write_saved(&self.ctx, &name, &login)
             .with_context(|| format!("failed to save account credential for {name}"))?;
 
         let now = now_epoch();

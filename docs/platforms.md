@@ -34,6 +34,10 @@ The configuration directory is `%APPDATA%\claude-quota-router` on Windows, `$XDG
 
 ## What a switch does not change
 
-A switch replaces the active credential and nothing else. The `oauthAccount` block in `~/.claude.json` still holds the previous account's email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account because the OAuth token decides that, but anything Claude Code reads back out of that block lags behind, including the `email` that `claude auth status` reports.
+A switch replaces the account's login inside the active credential and nothing else. Claude Code keeps one record per machine, and next to the login it holds MCP server OAuth tokens, plugin secrets, and gateway pins. The router swaps only the keys Claude Code itself drops when another account signs in (`claudeAiOauth`, `organizationUuid`, `trustedDeviceToken`, `enterpriseGateway`, `designOauth`), and a saved account holds only those keys. An MCP server you authorize under one account stays authorized under every other.
+
+![Switching to saved account B. Before, B's saved copy replaced the whole record, so MCP and plugin tokens went back to when B was saved. Now only the account keys come from B, and every other key stays as it is in the active record.](figures/switch-keys.svg)
+
+The `oauthAccount` block in `~/.claude.json` still holds the previous account's email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account because the OAuth token decides that, but anything Claude Code reads back out of that block lags behind, including the `email` that `claude auth status` reports.
 
 `setup` names an account after that email, so running it right after a switch would file the new credential under the previous account's name. It refuses instead: if the active credential is already saved under another name, it says so and stops.

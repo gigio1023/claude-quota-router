@@ -149,7 +149,8 @@ A purge asks before it deletes; `--yes` answers for it. None of these touch the 
 ## Good to know
 
 - **Restart Claude Code after a switch.** A running session holds the credential it started with. The statusline says so when it switches for you.
-- **The account Claude Code displays lags behind.** A switch replaces the active credential and nothing else. The `oauthAccount` block in `~/.claude.json` keeps the previous email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account regardless, because the OAuth token decides that.
+- **A switch changes the account and nothing else.** Only the Claude login inside the active credential is replaced, so MCP servers and plugins you authorized stay authorized. [Platforms](docs/platforms.md#what-a-switch-does-not-change) lists the keys.
+- **The account Claude Code displays lags behind.** The `oauthAccount` block in `~/.claude.json` keeps the previous email, organization, and seat tier until Claude Code refetches the profile, which it does at most once a day. Requests go to the new account regardless, because the OAuth token decides that.
 - **That lag reaches `claude auth status`,** which is where `setup` gets its default name. Running `setup` right after a switch would file the new credential under the previous account's name, so it refuses when the active credential is already saved under another name. Sign in properly with `claude auth login`, or pass the name yourself.
 - **Saved credentials are real credentials.** On macOS they are Keychain items under the service `claude-quota-router`; elsewhere they are owner-only files. They carry a live refresh token, so treat them the way you treat the login itself.
 - **A broken state file costs you the router, not your statusline.** If this tool's own files cannot be read, it prints nothing and your original command still renders.
