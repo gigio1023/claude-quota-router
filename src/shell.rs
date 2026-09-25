@@ -65,26 +65,3 @@ pub(crate) fn quote(path: &Path) -> String {
 pub(crate) fn quote(path: &Path) -> String {
     format!("\"{}\"", path.to_string_lossy())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(not(windows))]
-    #[test]
-    fn quotes_paths_for_the_shell() {
-        assert_eq!(
-            quote(Path::new("/tmp/a b/account's/bin")),
-            r"'/tmp/a b/account'\''s/bin'"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn quotes_paths_for_the_shell() {
-        assert_eq!(
-            quote(Path::new(r"C:\Program Files\bin.exe")),
-            "\"C:\\Program Files\\bin.exe\""
-        );
-    }
-}

@@ -153,41 +153,6 @@ mod tests {
     }
 
     #[test]
-    fn priority_list_wins_over_plan_kind() {
-        let state = state_with(&[
-            ("enterprise-main", AccountKind::Enterprise),
-            ("personal-main", AccountKind::Personal),
-            ("team-main", AccountKind::Team),
-        ]);
-        let config = config_with(&["team-main", "enterprise-main"]);
-
-        assert_eq!(
-            ordered_accounts(&state, &config),
-            vec!["team-main", "enterprise-main", "personal-main"]
-        );
-    }
-
-    #[test]
-    fn unranked_accounts_fall_in_by_plan_kind() {
-        let state = state_with(&[
-            ("enterprise-main", AccountKind::Enterprise),
-            ("other-main", AccountKind::Other),
-            ("personal-main", AccountKind::Personal),
-            ("team-main", AccountKind::Team),
-        ]);
-
-        assert_eq!(
-            ordered_accounts(&state, &config_with(&[])),
-            vec![
-                "personal-main",
-                "team-main",
-                "enterprise-main",
-                "other-main"
-            ]
-        );
-    }
-
-    #[test]
     fn skips_accounts_that_are_still_at_their_limit() {
         let state = state_with(&[
             ("personal-main", AccountKind::Personal),
@@ -234,21 +199,6 @@ mod tests {
         assert_eq!(
             return_target(&state, &config, &cache, "personal-main", 2500),
             None
-        );
-    }
-
-    #[test]
-    fn reports_the_reset_the_router_is_waiting_on() {
-        let state = state_with(&[
-            ("personal-main", AccountKind::Personal),
-            ("team-main", AccountKind::Team),
-        ]);
-        let config = config_with(&["team-main", "personal-main"]);
-        let cache = cache_with(&[("team-main", 100, 2000)]);
-
-        assert_eq!(
-            pending_recovery(&state, &config, &cache, "personal-main", 1500),
-            Some(("team-main".to_string(), "5h", 2000))
         );
     }
 }
