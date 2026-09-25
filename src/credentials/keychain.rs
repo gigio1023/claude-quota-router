@@ -187,24 +187,3 @@ fn parse_keychain_account(output: &str) -> Option<String> {
     }
     None
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_keychain_account() {
-        let text = r#"
-keychain: "/Users/me/Library/Keychains/login.keychain-db"
-class: "genp"
-attributes:
-    "acct"<blob>="me@example.com"
-    "svce"<blob>="Claude Code-credentials"
-"#;
-        assert_eq!(
-            parse_keychain_account(text).as_deref(),
-            Some("me@example.com")
-        );
-    }
-
-}

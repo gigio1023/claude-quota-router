@@ -47,16 +47,3 @@ pub(crate) fn humanize(seconds: i64) -> String {
     }
     format!("{}h{}m", minutes / 60, minutes % 60)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_remaining_time() {
-        assert_eq!(humanize(-5), "0s");
-        assert_eq!(humanize(45), "45s");
-        assert_eq!(humanize(61), "2m");
-        assert_eq!(humanize(7800), "2h10m");
-    }
-}

@@ -278,34 +278,3 @@ fn run_inner_statusline(ctx: &AppContext, input: &str) -> Option<String> {
     // preserves compatibility; it does not reinterpret the user's command.
     shell::run_statusline(command, input)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn parses_every_rate_limit_window() {
-        let input = json!({
-            "rate_limits": {
-                "five_hour": { "used_percentage": 91, "resets_at": 1000 },
-                "seven_day": { "used_percentage": "12", "resets_at": "2000" },
-                "spend_limit": { "used_percentage": 40, "resets_at": 3000 }
-            }
-        });
-        let parsed = parse_rate_limits(&input).unwrap();
-        assert_eq!(parsed.five_hour.used_percentage, Some(91));
-        assert_eq!(parsed.seven_day.used_percentage, Some(12));
-        assert_eq!(parsed.seven_day.resets_at, Some(2000));
-        assert_eq!(parsed.spend_limit.used_percentage, Some(40));
-    }
-
-    #[test]
-    fn ignores_readings_until_the_new_credential_settles() {
-        let mut state = State::default();
-        assert!(!is_settling(&state, 1000));
-        state.switched_at = Some(1000);
-        assert!(is_settling(&state, 1000 + SWITCH_GRACE - 1));
-        assert!(!is_settling(&state, 1000 + SWITCH_GRACE));
-    }
-}

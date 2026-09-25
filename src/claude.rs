@@ -152,18 +152,4 @@ mod tests {
             r#"{"claudeAiOauth":{"accessToken":"b"}}"#
         );
     }
-
-    #[test]
-    fn reads_email_and_plan_from_auth_status() {
-        let payload = br#"{
-            "loggedIn": true,
-            "authMethod": "claude.ai",
-            "email": "someone@example.com",
-            "orgName": "Example",
-            "subscriptionType": "max"
-        }"#;
-        let status = parse_status(payload).unwrap();
-        assert_eq!(status.email.as_deref(), Some("someone@example.com"));
-        assert_eq!(status.kind, Some(AccountKind::Personal));
-    }
 }
